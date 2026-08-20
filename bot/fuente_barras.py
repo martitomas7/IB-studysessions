@@ -37,6 +37,19 @@ class ContextoDia:
     ph: object = None   # crudo (sin reflejar) -- solo relevante si direccion no es None
     pl: object = None
     pc: object = None
+    # D8.4 reestructuración, LA PUERTA GRANDE (ORDEN_DE_TRABAJO_D8.md §4,
+    # RESPUESTA_D8_CONCURRENCIA.md §3): `direccion` decide QUIÉN fuerza
+    # dirección/ventana/resets (None -> bucle_del_dia sortea; forzada ->
+    # el pack los da) -- este flag decide, INDEPENDIENTEMENTE, QUÉ
+    # resolutor usa `bucle_del_dia.py` para el día: `False` (por defecto,
+    # preserva el contrato de siempre de `FuenteDeReplay`) delega en
+    # `sesion.resolver_dia` (array ya conocido, resolución instantánea);
+    # `True` construye `bot/bucle_de_tiempo.py::resuelve_dia_concurrente`
+    # (D8.2/D8.3/D8.5 de verdad, bar a bar) incluso con la dirección
+    # forzada -- el tercer modo que hace falta para correr la Puerta
+    # Grande "por el bucle en vivo" (§4) sin perder "forzando dirección,
+    # ventana y resets igual que hace el contrato del replay".
+    resolucion_en_vivo: bool = False
 
 
 class FuenteDeReplay:

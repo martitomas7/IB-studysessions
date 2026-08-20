@@ -102,7 +102,7 @@ def bucle_del_dia(fuente_barras, adaptador,
             resuelve_eval = resuelve_funded = None   # None -> procesa_dia() usa sesion.resolver_dia
             resuelve_concurrente = None               # solo se liga en el camino EN VIVO, ver abajo
 
-            if ctx.direccion is not None:
+            if ctx.direccion is not None and not ctx.resolucion_en_vivo:
                 # REPLAY: todo forzado desde el pack, exactamente como hacía
                 # orquestador.py::procesa_dia_replay antes de esta extracción.
                 direccion = ctx.direccion
@@ -110,6 +110,27 @@ def bucle_del_dia(fuente_barras, adaptador,
                 b0v = cfg.sesion.cal_rth.b0_rth.valor() if ventana_txt == "RTH" else 0
                 ph, pl, pc = calendario.refleja_camino(ctx.ph, ctx.pl, ctx.pc, direccion)
                 n_resets_hoy = ctx.n_resets_hoy
+            elif ctx.direccion is not None and ctx.resolucion_en_vivo:
+                # LA PUERTA GRANDE (ORDEN_DE_TRABAJO_D8.md §4): dirección,
+                # ventana y resets FORZADOS desde el pack -- "igual que hace
+                # el contrato del replay" -- pero resueltos "por el bucle en
+                # vivo" (D8.2/D8.3/D8.5 de verdad, bar a bar, vía el mismo
+                # bucle de tiempo compartido que usa producción). Tercer
+                # modo del contrato de `ContextoDia` -- ver su docstring.
+                direccion = ctx.direccion
+                ventana_txt = ctx.ventana_txt
+                b0v = cfg.sesion.cal_rth.b0_rth.valor() if ventana_txt == "RTH" else 0
+                n_resets_hoy = ctx.n_resets_hoy
+                ph = pl = pc = resolucion_en_vivo.CAMINO_NO_USADO_EN_VIVO
+
+                dia_de_hoy = st["dia_negociacion"] + 1
+                resuelve_concurrente = partial(
+                    bucle_de_tiempo.resuelve_dia_concurrente,
+                    adaptador=adaptador, fuente_barras=fuente_barras,
+                    cuenta_hedge_eval=cuenta_hedge_eval, cuenta_prop_eval=cuenta_prop_eval,
+                    cuenta_hedge_funded=cuenta_hedge_funded, cuenta_prop_funded=cuenta_prop_funded,
+                    instrumento_prop=instrumento_prop, ruta_ordenes=ruta_ordenes,
+                    ruta_nivel=ruta_nivel, dia_negociacion=dia_de_hoy, reloj=reloj, dormir=dormir)
             else:
                 # EN VIVO: se sortea de verdad. La dirección de HOY sale de
                 # contra_pendiente YA ACTUALIZADO por procesa_dia() de AYER
