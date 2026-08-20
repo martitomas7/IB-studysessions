@@ -87,6 +87,191 @@ def qcap_abierto_por_tesoreria(caja, retirado):
 # EVAL · R-4.2, R-4.3 (empalme), R-4.7 (aprobación provisional/confirmada)
 # =============================================================================
 
+def arma_intento_eval(eval_estado, pool_estado, caja_delta, eventos, qok,
+                       intentos_nuevos_ok, estado, dia_actual):
+    """PRE-mercado del intento 0 de eval -- extraído SIN CAMBIOS de lo que
+    era el arranque de `procesa_dia_eval` (pipeline3.py:319-330 + el
+    `sizing.plan` de la línea ~336), para D8.4 reestructurado
+    (RESPUESTA_D8_CONCURRENCIA.md §3: "abre_dia" arma el plan de cada slot
+    ANTES de que el bucle de tiempo compartido empiece a mirar barras --
+    eval y funded dejan de competir por un único cursor de
+    `fuente_barras`).
+
+    `caja_delta`/`eventos`: acumuladores YA EXISTENTES del día (para el
+    intento 0 el llamador pasa `0.0`/eventos vacíos) -- se HILAN, nunca se
+    sustituyen ni se sustituyen por otro, exactamente como hacía la
+    variable local única de la función monolítica; ver `arma_empalme_eval`
+    más abajo, que retoma estos MISMOS acumuladores en vez de empezar de
+    cero, para que todo el día siga siendo una única cuenta corriente.
+
+    R-4.1: si el slot ya viene activo (una 'pausa' de ayer que sigue el
+    mismo linaje), NO se toma ninguna sub nueva -- se arma el plan
+    directamente sobre el balance ya acumulado. Si está vacío, solo
+    arranca si `qok` Y el operador no ha pausado los intentos nuevos
+    (`comandos.pausa_eval`) Y el pool cede una sub (`toma_sub`, R-4.5
+    emergencia incluida).
+
+    Devuelve dict(arranca: bool, eval_estado, pool_estado, caja_delta,
+    eventos, [plan, m, friccion, deslizamiento] si arranca=True) -- si
+    `arranca=False`, el llamador debe devolver el dict de "slot vacío"
+    exactamente como hacía la función monolítica."""
+    cfg = config.obtener()
+    m_eval = cfg.sizing.m_eval.valor()
+    exp_eval = cfg.sizing.exp_eval_usd.valor()
+    kcap = cfg.sizing.kcap.valor()
+    T_eval = cfg.proveedor.objetivo_eval_usd.valor()
+    spr = cfg.hedge_broker.spr_usd.valor()
+    slip_micro = cfg.hedge_broker.slip_usd_micro.valor()
+    cuota = cfg.proveedor.cuota_sub_usd.valor()
+    b_eval = cfg.sizing.b_eval_usd.valor()          # R-2.2: G = max(s0,0) + B
+
+    ev = dict(eval_estado)
+    pool = dict(pool_estado)
+    caja_delta = caja_delta
+    eventos = dict(eventos)
+
+    # --- ¿el slot está vacío? intentar arrancar un intento nuevo (R-4.1) -------
+    if not ev["activa"]:
+        if qok and intentos_nuevos_ok:
+            obtuvo, es_emerg, coste, pool["frescas"], pool["rotas"] = toma_sub(
+                pool["frescas"], pool["rotas"], estado, dia_actual)
+            if obtuvo:
+                caja_delta -= coste
+                if es_emerg:
+                    eventos["emergencias"] += 1
+                eventos["intentos"] += 1
+                ev = dict(activa=True, bal=0.0, pico=0.0, H=0.0, s0=cuota, k=0.0, m=0.0,
+                          aprobada_provisional=False, aprobada_confirmada=False)
+    if not ev["activa"]:
+        return dict(arranca=False, eval_estado=ev, pool_estado=pool,
+                     caja_delta=caja_delta, eventos=eventos)
+
+    friccion = spr * m_eval
+    plan = sizing.plan(bal=ev["bal"], pico=ev["pico"], G=max(ev["s0"], 0.0) + b_eval, H=ev["H"],
+                        fric=friccion, m=m_eval, EXP=exp_eval, T=T_eval, dcap=1e18, kcap=kcap)
+    return dict(arranca=True, eval_estado=ev, pool_estado=pool, caja_delta=caja_delta,
+                eventos=eventos, plan=plan, m=m_eval, friccion=friccion,
+                deslizamiento=slip_micro * m_eval)
+
+
+def arma_empalme_eval(eval_estado, pool_estado, caja_delta, eventos, dia_previo,
+                       empalme_on, qok, estado, dia_actual):
+    """R-4.3: decide si HOY toca el ÚNICO empalme posible tras la muerte de
+    un intento -- y si toca, arranca la sub nueva + arma su plan (fricción
+    con el factor de empalme). Extraído SIN CAMBIOS de pipeline3.py:369-374
+    -- misma forma de salida que `arma_intento_eval` (mismas claves) para
+    que el llamador trate los dos intentos igual.
+
+    `dia_previo`: el dict YA RESUELTO del intento que acaba de morir (para
+    leer `barra_evento`, R-4.3: "si la muerte ocurre antes de las últimas
+    `empalme_barra_limite` barras"). `caja_delta`/`eventos`: los MISMOS
+    acumuladores que trae el intento que acaba de morir -- se continúan,
+    no se reinician (ver docstring de `arma_intento_eval`)."""
+    cfg = config.obtener()
+    m_eval = cfg.sizing.m_eval.valor()
+    exp_eval = cfg.sizing.exp_eval_usd.valor()
+    kcap = cfg.sizing.kcap.valor()
+    T_eval = cfg.proveedor.objetivo_eval_usd.valor()
+    spr = cfg.hedge_broker.spr_usd.valor()
+    slip_micro = cfg.hedge_broker.slip_usd_micro.valor()
+    cuota = cfg.proveedor.cuota_sub_usd.valor()
+    b_eval = cfg.sizing.b_eval_usd.valor()
+    empalme_factor = cfg.orquestacion.empalme_friccion_factor.valor()
+    empalme_limite = cfg.orquestacion.empalme_barra_limite.valor()
+    nb_use = cfg.sesion.barras_por_dia.valor()
+
+    ev = dict(eval_estado)
+    pool = dict(pool_estado)
+    caja_delta = caja_delta
+    eventos = dict(eventos)
+
+    quiere = empalme_on and (dia_previo["barra_evento"] < nb_use - empalme_limite) and qok
+    if not quiere:
+        return dict(arranca=False, eval_estado=ev, pool_estado=pool,
+                     caja_delta=caja_delta, eventos=eventos)
+
+    obtuvo, es_emerg, coste, pool["frescas"], pool["rotas"] = toma_sub(
+        pool["frescas"], pool["rotas"], estado, dia_actual)
+    if not obtuvo:
+        return dict(arranca=False, eval_estado=ev, pool_estado=pool,
+                     caja_delta=caja_delta, eventos=eventos)
+
+    caja_delta -= coste
+    if es_emerg:
+        eventos["emergencias"] += 1
+    eventos["intentos"] += 1
+    ev = dict(activa=True, bal=0.0, pico=0.0, H=0.0, s0=cuota, k=0.0, m=0.0,
+              aprobada_provisional=False, aprobada_confirmada=False)
+    b0_empalme = dia_previo["barra_evento"]
+    friccion_empalme = spr * m_eval * empalme_factor
+    plan2 = sizing.plan(bal=0.0, pico=0.0, G=max(cuota, 0.0) + b_eval, H=0.0,
+                         fric=friccion_empalme, m=m_eval, EXP=exp_eval, T=T_eval,
+                         dcap=1e18, kcap=kcap)
+    return dict(arranca=True, eval_estado=ev, pool_estado=pool, caja_delta=caja_delta,
+                eventos=eventos, plan=plan2, m=m_eval, friccion=friccion_empalme,
+                deslizamiento=slip_micro * m_eval, b0=b0_empalme)
+
+
+def cierra_resolucion_eval(eval_estado, pool_estado, caja_delta, hubo_muerte, eventos,
+                            dia, plan, cuota, rebuy_on, modo_auto_confirma, m_eval):
+    """POST-mercado de UN intento ya resuelto (sirve tanto para el intento 0
+    como para el empalme -- la propia función NO decide si intentar un
+    empalme, solo señala `quiere_intentar_empalme`; decidir CUÁNDO
+    intentarlo, y que el empalme del empalme no exista, "máximo 1 empalme
+    por día", vive en el llamador, `procesa_dia_eval`/D8.4). Extraído SIN
+    CAMBIOS de pipeline3.py:337-368 (intento 0) / 375-387 (empalme, mismo
+    bloque).
+
+    Devuelve dict(eval_estado, pool_estado, sunk_a_recamara, caja_delta,
+    hubo_muerte, eventos, bloqueo, quiere_intentar_empalme)."""
+    ev = dict(eval_estado)
+    pool = dict(pool_estado)
+    eventos = dict(eventos)
+
+    caja_delta += dia["hedge_dolares"]
+    ev["H"] += dia["hedge_dolares"]
+    ev["bal"] += dia["dx_puntos"] * 5.0 * plan["k"] - dia["comision"]
+    ev["pico"] = max(ev["pico"], ev["bal"])
+    ev["k"] = plan["k"]           # recomendación 5: persistir k/m del día -- el
+    ev["m"] = m_eval               # dashboard no debe RECALCULAR, solo mostrar lo usado
+    hubo_muerte = hubo_muerte or dia["muere"]
+    if dia["muere"]:
+        eventos["muertes_eval"] += 1
+        # pipeline3.py:356 "broken += mu.astype(int)" -- la SUB que muere se marca
+        # rota, aparte y antes de cualquier toma() que pida una nueva para el
+        # empalme. Sin esto el pool pierde la cuenta: una sub que murio no
+        # desaparece, queda "rota" hasta que la toque un reset gratis (R-4.4).
+        pool["rotas"] += 1
+
+    sunk_a_recamara = None
+    bloqueo_hoy = plan["bloqueo"]
+    quiere_intentar_empalme = False
+    T_eval = config.obtener().proveedor.objetivo_eval_usd.valor()
+    if dia["objetivo"] and ev["bal"] >= T_eval - 1e-9:
+        sunk_a_recamara, ev, pool, caja_delta, eventos = _aprueba_eval(
+            ev, pool, caja_delta, eventos, cuota, rebuy_on, modo_auto_confirma)
+    elif dia["muere"]:
+        # R-4.3: "si la eval muere intradía y la muerte ocurre antes de las últimas
+        # `empalme_barra_limite` barras, el bot empalma el MISMO día ... Máximo 1
+        # empalme por día". La decisión de intentarlo de verdad (barra límite, qok,
+        # toma_sub) vive en `arma_empalme_eval` -- aquí solo se señala.
+        quiere_intentar_empalme = True
+    elif bloqueo_hoy:
+        # pipeline3.py: en el intento 0, cuando NO hay muerte (mu=False), el "else"
+        # del bucle aplica `e_act &= ~mu & ~bq` -- con mu=False eso es `&= ~bq`:
+        # un intento 0 bloqueado SI desactiva el slot (a diferencia de una fondeada
+        # bloqueada, que sigue intentando manana con el MISMO linaje -- aqui, al
+        # no haber linaje que conservar dentro del slot, el slot vuelve a quedar
+        # vacio y manana se intenta con una sub nueva).
+        ev["activa"] = False
+    # si no hubo objetivo, ni muerte, ni bloqueo: sobrevivio/pauso, sigue activa
+    # tal cual (bal/H/pico ya actualizados arriba).
+
+    return dict(eval_estado=ev, pool_estado=pool, sunk_a_recamara=sunk_a_recamara,
+                caja_delta=caja_delta, hubo_muerte=hubo_muerte, eventos=eventos,
+                bloqueo=bloqueo_hoy, quiere_intentar_empalme=quiere_intentar_empalme)
+
+
 def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
                       ph, pl, pc, b0v, qok, modo_auto_confirma, estado, dia_actual,
                       resuelve_dia=None):
@@ -94,20 +279,26 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
     posible empalme -- es la versión de-vectorizada de pipeline3.py:319-387, el
     bucle `for s in range(E): ... for intento in range(2):`.
 
+    D8.4 reestructurado (RESPUESTA_D8_CONCURRENCIA.md §3, 20-08-2026): esta
+    función ahora es un envoltorio DELGADO sobre `arma_intento_eval` ->
+    `resuelve_dia` -> `cierra_resolucion_eval` (y, si toca empalme,
+    `arma_empalme_eval` -> `resuelve_dia` -> `cierra_resolucion_eval` una
+    segunda vez) -- exactamente la misma composición, en el mismo orden,
+    que antes vivía inline en un solo cuerpo. El camino replay/blocking
+    (este mismo, sin cambios de comportamiento) sigue siendo el que usa
+    `orquestador.corre_replay()`; el camino EN VIVO concurrente
+    (`bot/bucle_de_tiempo.py`, D8.4) llama a las cuatro piezas por
+    separado, sustituyendo la llamada bloqueante a `resuelve_dia` por
+    pasos no bloqueantes de `bot/resolucion_en_vivo.py::MaquinaEnVivo` --
+    así eval y funded dejan de competir por un único cursor de barras
+    (ver RESPUESTA_D8_CONCURRENCIA.md, la razón original de esta
+    extracción).
+
     `resuelve_dia` (D8.4, ORDEN_DE_TRABAJO_D8.md §0, revisión 20-08-2026):
     inyección aditiva pura -- por defecto es `sesion.resolver_dia` (el
     oráculo congelado, R6), así que TODO llamador existente (empezando por
     `orquestador.py`) obtiene el comportamiento EXACTO de siempre sin
-    cambiar una línea. `bot/bucle_del_dia.py` (D8.4, en vivo) es el único
-    llamador que pasa algo distinto -- una instancia de
-    `bot/resolucion_en_vivo.py::ResuelveDiaEnVivo`, que tiene la MISMA
-    firma posicional/keyword que `sesion.resolver_dia` pero, en vez de
-    barrer un array de barras ya conocido, coloca un bracket en reposo
-    (D8.2) y espera la resolución real del bróker. Este módulo no sabe
-    cuál de los dos es -- solo reenvía sus 8 argumentos y usa el dict de
-    vuelta, exactamente igual en los dos mundos (esto es lo que hace
-    cierto, en sentido fuerte, "un solo bucle" de §0: la MISMA llamada,
-    no una aritmética equivalente hecha dos veces).
+    cambiar una línea.
 
     `modo_auto_confirma`: en modo replay (validación contra el motor congelado, que
     aprueba y confirma al instante) esto es True. En el bot real (Arquitectura §8:
@@ -143,135 +334,54 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
     # llamada, monkeypatch incluido.
     resuelve_dia = resuelve_dia or sesion.resolver_dia
     cfg = config.obtener()
-    m_eval = cfg.sizing.m_eval.valor()
-    exp_eval = cfg.sizing.exp_eval_usd.valor()
-    kcap = cfg.sizing.kcap.valor()
-    T_eval = cfg.proveedor.objetivo_eval_usd.valor()
-    spr = cfg.hedge_broker.spr_usd.valor()
-    slip_micro = cfg.hedge_broker.slip_usd_micro.valor()
-    cuota = cfg.proveedor.cuota_sub_usd.valor()
-    b_eval = cfg.sizing.b_eval_usd.valor()          # R-2.2: G = max(s0,0) + B
     empalme_on = comandos.valor_efectivo('empalme', cfg.orquestacion.empalme.valor(),
                                           estado, dia_actual)
     intentos_nuevos_ok = comandos.valor_efectivo('pausa_eval', True, estado, dia_actual)
-    empalme_factor = cfg.orquestacion.empalme_friccion_factor.valor()
-    empalme_limite = cfg.orquestacion.empalme_barra_limite.valor()
-    nb_use = cfg.sesion.barras_por_dia.valor()
     rebuy_on = cfg.orquestacion.rebuy.valor()
+    cuota = cfg.proveedor.cuota_sub_usd.valor()
+    m_eval = cfg.sizing.m_eval.valor()
+    eventos_cero = dict(intentos=0, aprobaciones=0, emergencias=0, recompras=0, muertes_eval=0)
 
-    ev = dict(eval_estado)
-    pool = dict(pool_estado)
-    caja_delta = 0.0
-    hubo_muerte = False
-    sunk_a_recamara = None
-    eventos = dict(intentos=0, aprobaciones=0, emergencias=0, recompras=0, muertes_eval=0)
-    bloqueo_hoy = False
+    arm = arma_intento_eval(eval_estado, pool_estado, 0.0, eventos_cero, qok,
+                             intentos_nuevos_ok, estado, dia_actual)
+    if not arm["arranca"]:
+        return dict(eval_estado=arm["eval_estado"], pool_estado=arm["pool_estado"],
+                     sunk_a_recamara=None, caja_delta=arm["caja_delta"], hubo_muerte=False,
+                     eventos=arm["eventos"], bloqueo=False)
 
-    # --- ¿el slot está vacío? intentar arrancar un intento nuevo (R-4.1) -------
-    if not ev["activa"]:
-        if qok and intentos_nuevos_ok:
-            obtuvo, es_emerg, coste, pool["frescas"], pool["rotas"] = toma_sub(
-                pool["frescas"], pool["rotas"], estado, dia_actual)
-            if obtuvo:
-                caja_delta -= coste
-                if es_emerg:
-                    eventos["emergencias"] += 1
-                eventos["intentos"] += 1
-                ev = dict(activa=True, bal=0.0, pico=0.0, H=0.0, s0=cuota, k=0.0, m=0.0,
-                          aprobada_provisional=False, aprobada_confirmada=False)
-    if not ev["activa"]:
-        return dict(eval_estado=ev, pool_estado=pool, sunk_a_recamara=None,
-                     caja_delta=caja_delta, hubo_muerte=False, eventos=eventos,
-                     bloqueo=False)
+    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=arm["plan"],
+                        m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
+    r = cierra_resolucion_eval(arm["eval_estado"], arm["pool_estado"], arm["caja_delta"], False,
+                                arm["eventos"], dia, arm["plan"], cuota, rebuy_on,
+                                modo_auto_confirma, m_eval)
 
-    # --- intento 0: la sesión normal, entrando en b0v --------------------------
-    b0 = b0v
-    friccion = spr * m_eval
-    plan = sizing.plan(bal=ev["bal"], pico=ev["pico"], G=max(ev["s0"], 0.0) + b_eval, H=ev["H"],
-                        fric=friccion, m=m_eval, EXP=exp_eval, T=T_eval, dcap=1e18, kcap=kcap)
-    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0, plan_resultado=plan,
-                        m=m_eval, fric=friccion, deslizamiento=slip_micro * m_eval)
-    bloqueo_hoy = plan["bloqueo"]
-    caja_delta += dia["hedge_dolares"]
-    ev["H"] += dia["hedge_dolares"]
-    ev["bal"] += dia["dx_puntos"] * 5.0 * plan["k"] - dia["comision"]
-    ev["pico"] = max(ev["pico"], ev["bal"])
-    ev["k"] = plan["k"]           # recomendación 5: persistir k/m del día -- el
-    ev["m"] = m_eval               # dashboard no debe RECALCULAR, solo mostrar lo usado
-    hubo_muerte = hubo_muerte or dia["muere"]
-    if dia["muere"]:
-        eventos["muertes_eval"] += 1
-        # pipeline3.py:356 "broken += mu.astype(int)" -- la SUB que muere se marca
-        # rota, aparte y antes de cualquier toma() que pida una nueva para el
-        # empalme. Sin esto el pool pierde la cuenta: una sub que murio no
-        # desaparece, queda "rota" hasta que la toque un reset gratis (R-4.4).
-        pool["rotas"] += 1
+    if not r["quiere_intentar_empalme"]:
+        return dict(eval_estado=r["eval_estado"], pool_estado=r["pool_estado"],
+                     sunk_a_recamara=r["sunk_a_recamara"], caja_delta=r["caja_delta"],
+                     hubo_muerte=r["hubo_muerte"], eventos=r["eventos"], bloqueo=r["bloqueo"])
 
-    empalme_intentado = False
-    if dia["objetivo"] and ev["bal"] >= T_eval - 1e-9:
-        sunk_a_recamara, ev, pool, caja_delta, eventos = _aprueba_eval(
-            ev, pool, caja_delta, eventos, cuota, rebuy_on, modo_auto_confirma)
-    elif dia["muere"]:
-        # R-4.3: "si la eval muere intradía y la muerte ocurre antes de las últimas
-        # `empalme_barra_limite` barras, el bot empalma el MISMO día ... Máximo 1
-        # empalme por día". Pipeline3.py:369-387 (el `if intento==0 and mu.any()`).
-        if empalme_on:
-            quiere = (dia["barra_evento"] < nb_use - empalme_limite) and qok
-            if quiere:
-                obtuvo, es_emerg, coste, pool["frescas"], pool["rotas"] = toma_sub(
-                    pool["frescas"], pool["rotas"], estado, dia_actual)
-                if obtuvo:
-                    empalme_intentado = True
-                    caja_delta -= coste
-                    if es_emerg:
-                        eventos["emergencias"] += 1
-                    eventos["intentos"] += 1
-                    ev = dict(activa=True, bal=0.0, pico=0.0, H=0.0, s0=cuota, k=0.0, m=0.0,
-                              aprobada_provisional=False, aprobada_confirmada=False)
-                    b0_empalme = dia["barra_evento"]
-                    friccion_empalme = spr * m_eval * empalme_factor
-                    plan2 = sizing.plan(bal=0.0, pico=0.0, G=max(cuota, 0.0) + b_eval, H=0.0,
-                                         fric=friccion_empalme, m=m_eval, EXP=exp_eval,
-                                         T=T_eval, dcap=1e18, kcap=kcap)
-                    dia2 = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0_empalme,
-                                        plan_resultado=plan2, m=m_eval, fric=friccion_empalme,
-                                        deslizamiento=slip_micro * m_eval)
-                    caja_delta += dia2["hedge_dolares"]
-                    ev["H"] += dia2["hedge_dolares"]
-                    ev["bal"] += dia2["dx_puntos"] * 5.0 * plan2["k"] - dia2["comision"]
-                    ev["pico"] = max(ev["pico"], ev["bal"])
-                    ev["k"] = plan2["k"]      # recomendación 5: el empalme re-sesiona con otro plan
-                    ev["m"] = m_eval
-                    hubo_muerte = hubo_muerte or dia2["muere"]
-                    if dia2["muere"]:
-                        eventos["muertes_eval"] += 1
-                        pool["rotas"] += 1     # misma regla que el intento 0, arriba
-                    # el intento 1 SIEMPRE cierra el dia (pipeline3.py: el "else" del
-                    # bucle de intentos corre igual para intento==1) -- aprueba,
-                    # o se desactiva si murio/bloqueo, o sigue activa si sobrevivio.
-                    if dia2["objetivo"] and ev["bal"] >= T_eval - 1e-9:
-                        sunk_a_recamara, ev, pool, caja_delta, eventos = _aprueba_eval(
-                            ev, pool, caja_delta, eventos, cuota, rebuy_on, modo_auto_confirma)
-                    elif dia2["muere"] or plan2["bloqueo"]:
-                        ev["activa"] = False
-        if dia["muere"] and not empalme_intentado:
-            # murio y no hubo empalme (deshabilitado, fuera del limite de barra,
-            # qcap cerrado, o sin sub disponible): la cuenta queda vacia.
-            ev["activa"] = False
-    elif bloqueo_hoy:
-        # pipeline3.py: en el intento 0, cuando NO hay muerte (mu=False), el "else"
-        # del bucle aplica `e_act &= ~mu & ~bq` -- con mu=False eso es `&= ~bq`:
-        # un intento 0 bloqueado SI desactiva el slot (a diferencia de una fondeada
-        # bloqueada, que sigue intentando manana con el MISMO linaje -- aqui, al
-        # no haber linaje que conservar dentro del slot, el slot vuelve a quedar
-        # vacio y manana se intenta con una sub nueva).
+    arm2 = arma_empalme_eval(r["eval_estado"], r["pool_estado"], r["caja_delta"], r["eventos"],
+                              dia, empalme_on, qok, estado, dia_actual)
+    if not arm2["arranca"]:
+        # murio y no hubo empalme (deshabilitado, fuera del limite de barra,
+        # qcap cerrado, o sin sub disponible): la cuenta queda vacia.
+        ev = dict(arm2["eval_estado"])
         ev["activa"] = False
-    # si no hubo objetivo, ni muerte, ni bloqueo: sobrevivio/pauso, sigue activa
-    # tal cual (bal/H/pico ya actualizados arriba).
+        return dict(eval_estado=ev, pool_estado=arm2["pool_estado"],
+                     sunk_a_recamara=r["sunk_a_recamara"], caja_delta=arm2["caja_delta"],
+                     hubo_muerte=r["hubo_muerte"], eventos=arm2["eventos"], bloqueo=r["bloqueo"])
 
-    return dict(eval_estado=ev, pool_estado=pool, sunk_a_recamara=sunk_a_recamara,
-                caja_delta=caja_delta, hubo_muerte=hubo_muerte, eventos=eventos,
-                bloqueo=bloqueo_hoy)
+    dia2 = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=arm2["b0"], plan_resultado=arm2["plan"],
+                         m=arm2["m"], fric=arm2["friccion"], deslizamiento=arm2["deslizamiento"])
+    r2 = cierra_resolucion_eval(arm2["eval_estado"], arm2["pool_estado"], arm2["caja_delta"],
+                                 r["hubo_muerte"], arm2["eventos"], dia2, arm2["plan"], cuota,
+                                 rebuy_on, modo_auto_confirma, m_eval)
+    ev2 = dict(r2["eval_estado"])
+    if r2["quiere_intentar_empalme"]:   # maximo 1 empalme/dia -- no se reintenta
+        ev2["activa"] = False
+    return dict(eval_estado=ev2, pool_estado=r2["pool_estado"], sunk_a_recamara=r2["sunk_a_recamara"],
+                caja_delta=r2["caja_delta"], hubo_muerte=r2["hubo_muerte"], eventos=r2["eventos"],
+                bloqueo=r["bloqueo"])
 
 
 def _aprueba_eval(ev, pool, caja_delta, eventos, cuota, rebuy_on, modo_auto_confirma):

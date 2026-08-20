@@ -113,47 +113,42 @@ CASOS.append(('qcap ignorado (recámara sin tope, R-4.6)', cv_mod, 'qcap_abierto
     '    return True  # BUG: el tope de recamara ya no se respeta'))
 
 # --- 5. la superviviente opera dos veces el mismo dia (bug de v8, gate de D5) ----
-# ANCLA/PARCHE actualizados 20-08-2026 (revision del operador sobre D-C): el texto
-# original dejo de existir literal en ciclo_vida.py en cuanto se cablearon las
-# RECOMENDACIONES 1/2/5 (valor_efectivo(), contador de muertes_eval, persistencia
-# de k/m) -- este caso se quedaba "SALTO" por una excepcion de ancla-no-encontrada
-# en vez de INYECTAR y CAZAR el bug de verdad, que es justo el hueco de R3 que esta
-# comprobacion existe para cerrar. Reconstruido contra el texto real actual.
-_ANCLA_5 = '''    ev["pico"] = max(ev["pico"], ev["bal"])
-    ev["k"] = plan["k"]           # recomendación 5: persistir k/m del día -- el
-    ev["m"] = m_eval               # dashboard no debe RECALCULAR, solo mostrar lo usado
-    hubo_muerte = hubo_muerte or dia["muere"]
-    if dia["muere"]:
-        eventos["muertes_eval"] += 1
-        # pipeline3.py:356 "broken += mu.astype(int)" -- la SUB que muere se marca'''
-_PARCHE_5 = '''    ev["pico"] = max(ev["pico"], ev["bal"])
-    ev["k"] = plan["k"]           # recomendación 5: persistir k/m del día -- el
-    ev["m"] = m_eval               # dashboard no debe RECALCULAR, solo mostrar lo usado
-    hubo_muerte = hubo_muerte or dia["muere"]
+# ANCLA/PARCHE actualizados 20-08-2026 (D8.4 reestructuracion,
+# RESPUESTA_D8_CONCURRENCIA.md: procesa_dia_eval se partio en
+# arma_intento_eval/arma_empalme_eval/cierra_resolucion_eval -- el texto de la
+# version anterior de este caso vivia dentro del cuerpo monolitico que ya no
+# existe; b_eval/friccion/T_eval/... dejaron de estar en el scope de
+# cierra_resolucion_eval, asi que la inyeccion se reconstruye sobre el
+# ENVOLTORIO delgado (procesa_dia_eval), que es donde ph/pl/pc/b0v/resuelve_dia
+# siguen en scope justo despues de resolver el intento 0. Mismo bug de
+# siempre: una cuenta SUPERVIVIENTE (sin muerte, sin empalme) vuelve a operar
+# una SEGUNDA vez el MISMO dia, sobre el mismo b0v -- no debe pasar nunca.
+_ANCLA_5 = '''    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=arm["plan"],
+                        m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
+    r = cierra_resolucion_eval(arm["eval_estado"], arm["pool_estado"], arm["caja_delta"], False,
+                                arm["eventos"], dia, arm["plan"], cuota, rebuy_on,
+                                modo_auto_confirma, m_eval)'''
+_PARCHE_5 = '''    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=arm["plan"],
+                        m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
+    r = cierra_resolucion_eval(arm["eval_estado"], arm["pool_estado"], arm["caja_delta"], False,
+                                arm["eventos"], dia, arm["plan"], cuota, rebuy_on,
+                                modo_auto_confirma, m_eval)
     # BUG INYECTADO (romper_mi_orquestador.py, D5): el bug de v8 -- una cuenta
     # SUPERVIVIENTE (sin muerte, sin empalme) vuelve a operar una SEGUNDA vez
-    # el MISMO dia, sobre el mismo b0. No debe pasar nunca: sesiones_de_eval
+    # el MISMO dia, sobre el mismo b0v. No debe pasar nunca: sesiones_de_eval
     # debe ser <= 1 + empalmes.
     if not dia["muere"]:
-        plan_bug = sizing.plan(bal=ev["bal"], pico=ev["pico"],
-                                G=max(ev["s0"], 0.0) + b_eval, H=ev["H"], fric=friccion,
-                                m=m_eval, EXP=exp_eval, T=T_eval, dcap=1e18, kcap=kcap)
-        dia_bug = sesion.resolver_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0,
-                                       plan_resultado=plan_bug, m=m_eval, fric=friccion,
-                                       deslizamiento=slip_micro * m_eval)
-        caja_delta += dia_bug["hedge_dolares"]
-        ev["H"] += dia_bug["hedge_dolares"]
-        ev["bal"] += dia_bug["dx_puntos"] * 5.0 * plan_bug["k"] - dia_bug["comision"]
-        ev["pico"] = max(ev["pico"], ev["bal"])
-        ev["k"] = plan_bug["k"]
-        ev["m"] = m_eval
-        if dia_bug["muere"]:
-            pool["rotas"] += 1
-        dia, plan = dia_bug, plan_bug
-        hubo_muerte = hubo_muerte or dia_bug["muere"]
-    if dia["muere"]:
-        eventos["muertes_eval"] += 1
-        # pipeline3.py:356 "broken += mu.astype(int)" -- la SUB que muere se marca'''
+        plan_bug = sizing.plan(bal=r["eval_estado"]["bal"], pico=r["eval_estado"]["pico"],
+                                G=max(r["eval_estado"]["s0"], 0.0) + cfg.sizing.b_eval_usd.valor(),
+                                H=r["eval_estado"]["H"], fric=arm["friccion"], m=m_eval,
+                                EXP=cfg.sizing.exp_eval_usd.valor(),
+                                T=cfg.proveedor.objetivo_eval_usd.valor(), dcap=1e18,
+                                kcap=cfg.sizing.kcap.valor())
+        dia_bug = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=plan_bug,
+                                m=m_eval, fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
+        r = cierra_resolucion_eval(r["eval_estado"], r["pool_estado"], r["caja_delta"],
+                                    r["hubo_muerte"], r["eventos"], dia_bug, plan_bug, cuota,
+                                    rebuy_on, modo_auto_confirma, m_eval)'''
 CASOS.append(('la eval SUPERVIVIENTE opera dos veces (gate D5)', cv_mod, 'procesa_dia_eval',
     _ANCLA_5, _PARCHE_5))
 
