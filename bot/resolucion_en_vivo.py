@@ -312,3 +312,252 @@ class ResuelveDiaEnVivo:
                 self.eventos.append(dict(tipo='DIVERGENCIA_ORACULO', slot=self.slot,
                                           dx_teorico=dx_teorico, dx_real=dx_real,
                                           diferencia=dx_real - dx_teorico))
+
+
+class MaquinaEnVivo:
+    """D8.4 reestructurado (RESPUESTA_D8_CONCURRENCIA.md §3, 20-08-2026):
+    la MISMA mecánica de `ResuelveDiaEnVivo` (D8.2/D8.3/D8.5, reflexión,
+    `DetectorEnVivo` diagnóstico) pero SIN poseer su propio bucle de
+    barras -- expone `abre()` (síncrono: bloqueo/D8.5/D8.2, no espera
+    ninguna barra, solo al bróker) y `avanza_barra(barra)` (UN paso: D8.3
+    + sondeo del bracket + diagnóstico), para que `bot/bucle_de_tiempo.py`
+    alimente una barra a la vez a TODAS las máquinas vivas del día por
+    igual.
+
+    Por qué existe (medido, no una preferencia estética --
+    RESPUESTA_D8_CONCURRENCIA.md §1-§2): `orquestador.procesa_dia()`
+    procesa funded ANTES que eval, secuencialmente; con
+    `ResuelveDiaEnVivo` (bloqueante, dueño de su propio `while True`
+    vigilando `fuente_barras`), si las dos están activas el mismo día
+    (222/504 días del pack, 44 %) eval no empezaría su propia sesión
+    hasta que funded resolviera la SUYA entera -- en producción real, con
+    un feed en vivo que bloquea horas esperando la siguiente barra, eso
+    es un bug real, no solo un artefacto de prueba.
+
+    `ResuelveDiaEnVivo` NO se borra -- sigue siendo el oráculo offline de
+    referencia contra el que se puntúa LA PUERTA GRANDE (ORDEN_DE_TRABAJO_D8.md
+    §4): esta clase es una via alternativa NUEVA para el camino de
+    producción concurrente, extraída de la misma mecánica ya verificada
+    (0/1500 discrepancias contra `sesion.resolver_dia`,
+    `prueba_resuelve_dia_en_vivo.py`), nunca una reimplementación aparte.
+
+    A diferencia de `ResuelveDiaEnVivo` (una instancia reentrante para
+    intento 0 + empalme, `self._intento` incrementado internamente), cada
+    intento del día es una `MaquinaEnVivo` NUEVA -- el llamador
+    (`bot/bucle_de_tiempo.py`) pasa `intento` explícito al construirla
+    (0 para el primero, 1 para el empalme...) en vez de que la máquina
+    lleve su propio contador mutable -- más simple: sin estado que
+    resetear entre intentos, y el `intent_id` de D8.5 sigue siendo único
+    por construcción (mismo `f"{dia}:{slot}:{intento}:{fase}"` de siempre).
+
+    Ciclo de vida: `SIN_ABRIR -> VIGILANDO -> RESUELTO`. `self.resultado`
+    solo es válido cuando `self.estado == 'RESUELTO'` -- mismo dict que
+    devuelve `ResuelveDiaEnVivo`/`sesion.resolver_dia`."""
+
+    def __init__(self, adaptador, cuenta_hedge, cuenta_prop, instrumento_prop, direccion,
+                 ruta_ordenes, ruta_nivel, slot, dia_negociacion, intento,
+                 eventos=None, reloj=None, dormir=None):
+        self.adaptador = adaptador
+        self.cuenta_hedge = cuenta_hedge
+        self.cuenta_prop = cuenta_prop
+        self.instrumento_prop = instrumento_prop
+        self.direccion = direccion
+        self.ruta_ordenes = ruta_ordenes
+        self.ruta_nivel = ruta_nivel
+        self.slot = slot
+        self.dia_negociacion = dia_negociacion
+        self.intento = intento
+        self.eventos = eventos if eventos is not None else []
+        self.reloj = reloj or time.monotonic
+        self.dormir = dormir or time.sleep
+
+        self.estado = 'SIN_ABRIR'
+        self.resultado = None
+        self._det = None
+        self._oid_stop = self._oid_lim = None
+        self._p0_real = None
+        self._barra_actual = None
+        self._barra_inicio = None
+        self._plan = None
+        self._valor_punto = None
+        self._MES = None
+
+    def _intent_id(self, fase):
+        return f"{self.dia_negociacion}:{self.slot}:{self.intento}:{fase}"
+
+    def abre(self, barra_inicio, plan_resultado, m, fric, deslizamiento=0.0):
+        """Fase síncrona -- pasos 1-5 de `ResuelveDiaEnVivo.__call__`
+        (bloqueo, D8.5 abre_las_dos_patas, D8.2 coloca_bracket,
+        `DetectorEnVivo` diagnóstico), SIN CAMBIOS de comportamiento.
+        Idempotente en la MISMA instancia (llamar dos veces no reabre,
+        aunque en el uso normal cada intento es una instancia nueva).
+        Deja `self.estado` en `'VIGILANDO'`, o directamente en
+        `'RESUELTO'` si bloqueo/entrada fallida (mismos casos 1/2 de
+        `ResuelveDiaEnVivo`). Devuelve `self.estado`."""
+        if self.estado != 'SIN_ABRIR':
+            return self.estado
+
+        cfg = config.obtener()
+        self._valor_punto = cfg.hedge_broker.valor_punto_usd.valor()
+        self._MES = cfg.hedge_broker.instrumento
+        self._barra_inicio = barra_inicio
+        self._barra_actual = barra_inicio
+        self._plan = plan_resultado
+
+        # 1. bloqueo (R-2.4): ni siquiera se llama al adaptador.
+        if plan_resultado['bloqueo']:
+            self.estado = 'RESUELTO'
+            self.resultado = dict(dx_puntos=0.0, hedge_dolares=0.0, comision=0.0, muere=False,
+                                   pausa=False, objetivo=False, barra_evento=barra_inicio)
+            return self.estado
+
+        # 2. D8.5: abre las dos patas -- protegido con testigo intención/resultado.
+        intent_abre = self._intent_id('abre')
+        apertura = IO.resultado_de(self.ruta_ordenes, intent_abre)
+        if apertura is None:
+            IO.escribe_intencion(self.ruta_ordenes, intent_abre,
+                                  dict(cuenta_hedge=self.cuenta_hedge, cuenta_prop=self.cuenta_prop,
+                                       instrumento_prop=self.instrumento_prop,
+                                       direccion=self.direccion, m=m, k=plan_resultado['k']))
+            apertura = DP.abre_las_dos_patas(
+                self.adaptador, self.cuenta_hedge, self.cuenta_prop, self.instrumento_prop,
+                self.direccion, m, plan_resultado['k'], eventos=self.eventos,
+                reloj=self.reloj, dormir=self.dormir)
+            IO.marca_resultado(self.ruta_ordenes, intent_abre, apertura)
+
+        if not apertura.get('abierto'):
+            # DECISIÓN DE INGENIERÍA (ver ResuelveDiaEnVivo): entrada fallida
+            # se trata como "no pasó nada hoy", mismo dict cero que el bloqueo.
+            self.eventos.append(dict(tipo='ENTRADA_FALLIDA_DIA_VACIO', slot=self.slot,
+                                      motivo=apertura.get('motivo')))
+            self.estado = 'RESUELTO'
+            self.resultado = dict(dx_puntos=0.0, hedge_dolares=0.0, comision=0.0, muere=False,
+                                   pausa=False, objetivo=False, barra_evento=barra_inicio)
+            return self.estado
+
+        # 3. p0 real -- el fill de la propia apertura, nunca un array.
+        _, _, p0_real = self.adaptador.leer_fill(apertura['order_id_prop'])
+        self._p0_real = p0_real
+
+        # 4. D8.2: coloca el bracket en reposo -- protegido igual que la apertura.
+        ndn, nu = plan_resultado['ndn'], plan_resultado['nu']
+        precio_stop_real = _refleja_escalar(p0_real - ndn, p0_real, self.direccion)
+        precio_limite_real = _refleja_escalar(p0_real + nu, p0_real, self.direccion)
+        intent_bracket = self._intent_id('bracket')
+        bracket = IO.resultado_de(self.ruta_ordenes, intent_bracket)
+        if bracket is None:
+            IO.escribe_intencion(self.ruta_ordenes, intent_bracket,
+                                  dict(precio_stop=precio_stop_real, precio_limite=precio_limite_real))
+            bracket = self.adaptador.coloca_bracket(
+                self.cuenta_prop, self.instrumento_prop, direccion_cierre=-self.direccion,
+                cantidad=plan_resultado['k'], precio_stop=precio_stop_real,
+                precio_limite=precio_limite_real)
+            IO.marca_resultado(self.ruta_ordenes, intent_bracket, bracket)
+        self._oid_stop, self._oid_lim = bracket['order_id_stop'], bracket['order_id_limite']
+
+        # 5. DetectorEnVivo: SOLO diagnóstico -- interfaz y lógica SIN TOCAR (R6).
+        self._det = DetectorEnVivo(p0=p0_real, ndn=ndn, nu=nu, m=m, fric=fric,
+                                    deslizamiento=deslizamiento, valor_punto=self._valor_punto,
+                                    k=plan_resultado['k'], cst=plan_resultado['comision'],
+                                    Mm=plan_resultado['Mm'], bloqueado=False)
+        self.estado = 'VIGILANDO'
+        return self.estado
+
+    def avanza_barra(self, barra):
+        """Un paso del bucle de tiempo compartido -- D8.3 + sondeo del
+        bracket + diagnóstico, para UNA barra que `bot/bucle_de_tiempo.py`
+        ya pidió una vez y reparte entre TODAS las máquinas vivas (esto es
+        lo que resuelve la concurrencia eval/funded). `barra` puede ser
+        `None` (fin de la fuente, mismo significado que en
+        `ResuelveDiaEnVivo`). No hace nada si no está `'VIGILANDO'`
+        (llamar de más tras `RESUELTO`, o antes de `abre()`, es
+        inofensivo). Devuelve `self.estado` tras el paso."""
+        if self.estado != 'VIGILANDO':
+            return self.estado
+
+        # D8.3: liquidación forzosa -- se comprueba en CADA paso, antes de
+        # mirar la barra (la posición real manda, nunca lo que diga la barra).
+        if deteccion_liquidacion.detecta_liquidacion_forzosa(
+                self.adaptador, self.cuenta_prop, self.instrumento_prop,
+                cantidad_esperada=self._plan['k'],
+                ordenes_propias_conocidas=[self._oid_stop, self._oid_lim]):
+            r = deteccion_liquidacion.resuelve_liquidacion_forzosa(
+                self.adaptador, self.cuenta_hedge, self._MES, eventos=self.eventos,
+                reloj=self.reloj, dormir=self.dormir)
+            SEG.reacciona_a_liquidacion_forzosa(self.ruta_nivel, detalle=str(r))
+            self.estado = 'RESUELTO'
+            self.resultado = dict(dx_puntos=0.0, hedge_dolares=0.0, comision=self._plan['comision'],
+                                   muere=True, pausa=False, objetivo=False,
+                                   barra_evento=self._barra_actual)
+            return self.estado
+
+        # R-3.2 (nunca se evalua la propia barra de entrada, ni barras <=
+        # barra_inicio de un cursor compartido/re-servido).
+        barra_usable = barra is not None and barra.b > self._barra_inicio
+        if barra_usable:
+            self._barra_actual = barra.b
+            phr, plr, pcr = _refleja_bar(barra.ph, barra.pl, barra.pc, self._p0_real, self.direccion)
+            self._det.alimenta_barra(barra.b, phr, plr, pcr, barra.es_ultima_barra_operable)
+
+        est_stop = self.adaptador.leer_estado_orden(self._oid_stop)
+        est_lim = self.adaptador.leer_estado_orden(self._oid_lim)
+        ganadora = 'stop' if est_stop == 'LLENA' else ('limite' if est_lim == 'LLENA' else None)
+
+        if ganadora is not None:
+            # una pata llenó -- cancela la hermana (defensa idempotente de
+            # respaldo, D8.2) y cierra SOLO el hedge (la prop ya se cerró sola).
+            oid_ganadora = self._oid_stop if ganadora == 'stop' else self._oid_lim
+            oid_perdedora = self._oid_lim if ganadora == 'stop' else self._oid_stop
+            self.adaptador.cancelar(oid_perdedora)
+            _, _, precio_fill_real = self.adaptador.leer_fill(oid_ganadora)
+            dx_real = _refleja_escalar(precio_fill_real, self._p0_real, self.direccion) - self._p0_real
+            DP._aplana_hasta_confirmar(self.adaptador, self.cuenta_hedge, self._MES, self.reloj,
+                                        self.dormir, self.eventos, 'hedge_tras_bracket_en_vivo')
+            self.resultado = self._resuelve_con_formula(self._plan['k'], dx_real,
+                                                          low=(ganadora == 'stop'),
+                                                          tgt=(ganadora == 'limite'),
+                                                          barra_evento=self._barra_actual)
+            self._registra_divergencia(dx_real)
+            self.estado = 'RESUELTO'
+            return self.estado
+
+        if barra is None or (barra_usable and barra.es_ultima_barra_operable):
+            # ninguna pata llenó antes de la campana -- cancela el grupo y
+            # cierra a mercado (mismo camino que el modelo, "ninguno toca").
+            self.adaptador.cancelar(self._oid_stop)
+            oid_cierre_prop = self.adaptador.aplanar(self.cuenta_prop, self.instrumento_prop)
+            DP._poll_hasta(self.adaptador, oid_cierre_prop, DP.ESTADOS_TERMINALES, None,
+                            self.reloj, self.dormir)
+            _, _, precio_cierre_real = self.adaptador.leer_fill(oid_cierre_prop)
+            DP.cierra_las_dos_patas(self.adaptador, self.cuenta_prop, self.instrumento_prop,
+                                     self.cuenta_hedge, eventos=self.eventos, reloj=self.reloj,
+                                     dormir=self.dormir)
+            dx_real = _refleja_escalar(precio_cierre_real, self._p0_real, self.direccion) - self._p0_real
+            self.resultado = self._resuelve_con_formula(self._plan['k'], dx_real, low=False,
+                                                          tgt=False, barra_evento=self._barra_actual)
+            self._registra_divergencia(dx_real)
+            self.estado = 'RESUELTO'
+            return self.estado
+
+        return self.estado   # sigue VIGILANDO -- el llamador pedirá otra barra
+
+    def _resuelve_con_formula(self, k, dx_real, low, tgt, barra_evento):
+        """Reutiliza la fórmula EXACTA de R-3.4/R-3.5 -- ver el docstring
+        del método homónimo de `ResuelveDiaEnVivo`, misma lógica."""
+        det_calculo = DetectorEnVivo(
+            p0=self._det.p0, ndn=self._det.ndn, nu=self._det.nu, m=self._det.m,
+            fric=self._det.fric, deslizamiento=self._det.deslizamiento,
+            valor_punto=self._det.valor_punto, k=k, cst=self._det.cst, Mm=self._det.Mm,
+            bloqueado=False)
+        det_calculo._cierra(dx_real, low=low, tgt=tgt, barra_evento=barra_evento)
+        return det_calculo.resultado
+
+    def _registra_divergencia(self, dx_real):
+        """Oráculo de diagnóstico -- ver el método homónimo de
+        `ResuelveDiaEnVivo`, misma lógica."""
+        if self._det.resuelto:
+            dx_teorico = self._det.resultado['dx_puntos']
+            if abs(dx_teorico - dx_real) > 1e-6:
+                self.eventos.append(dict(tipo='DIVERGENCIA_ORACULO', slot=self.slot,
+                                          dx_teorico=dx_teorico, dx_real=dx_real,
+                                          diferencia=dx_real - dx_teorico))
