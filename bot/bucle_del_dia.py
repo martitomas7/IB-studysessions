@@ -20,8 +20,9 @@ feed en vivo -- nunca una aritmética "equivalente" reimplementada aparte.
 """
 import json
 import os
+from functools import partial
 
-from bot import bloqueo_proceso, calendario, config, estado, orquestador
+from bot import bloqueo_proceso, bucle_de_tiempo, calendario, config, estado, orquestador
 from bot import reconciliacion, resolucion_en_vivo, seguridad as SEG
 
 
@@ -49,8 +50,11 @@ def bucle_del_dia(fuente_barras, adaptador,
     Si `fuente_barras.abre_dia()` devuelve un `ContextoDia` con
     `direccion=None` (mismo contrato que `FuenteEnVivo`), este bucle
     sortea de verdad (dirección con la regla CONTRA, ventana, resets) y
-    construye un `ResuelveDiaEnVivo` por slot -- si trae `direccion` ya
-    forzada (mismo contrato que `FuenteDeReplay`), delega en
+    liga un `resuelve_concurrente` (`bot/bucle_de_tiempo.py`, D8.4
+    reestructuración -- RESPUESTA_D8_CONCURRENCIA.md §3: funded y eval se
+    resuelven JUNTAS, por un único bucle de barras compartido, nunca una
+    esperando a que la otra acabe su día entero) -- si trae `direccion`
+    ya forzada (mismo contrato que `FuenteDeReplay`), delega en
     `sesion.resolver_dia` sin construir nada nuevo (pasando
     `resuelve_dia_eval=None`/`resuelve_dia_funded=None` a `procesa_dia()`,
     que usa su propio default).
@@ -96,6 +100,7 @@ def bucle_del_dia(fuente_barras, adaptador,
 
             ctx = fuente_barras.abre_dia()
             resuelve_eval = resuelve_funded = None   # None -> procesa_dia() usa sesion.resolver_dia
+            resuelve_concurrente = None               # solo se liga en el camino EN VIVO, ver abajo
 
             if ctx.direccion is not None:
                 # REPLAY: todo forzado desde el pack, exactamente como hacía
@@ -124,20 +129,26 @@ def bucle_del_dia(fuente_barras, adaptador,
                 n_resets_hoy = sum(1 for _ in range(st["pool"]["rotas"]) if rng.random() < p_reset)
                 ph = pl = pc = resolucion_en_vivo.CAMINO_NO_USADO_EN_VIVO
 
+                # D8.4 reestructuración (RESPUESTA_D8_CONCURRENCIA.md §3):
+                # funded y eval se resuelven JUNTAS, por el bucle de tiempo
+                # compartido -- un ResuelveDiaEnVivo por slot (bloqueante,
+                # cada uno dueño de su propio cursor de fuente_barras) haría
+                # que la segunda en llamarse esperase a que la primera
+                # acabase su día entero, si las dos están activas el mismo
+                # día (medido: 222/504 días del pack, 44 %).
                 dia_de_hoy = st["dia_negociacion"] + 1
-                resuelve_eval = resolucion_en_vivo.ResuelveDiaEnVivo(
-                    adaptador, cuenta_hedge_eval, cuenta_prop_eval, instrumento_prop, direccion,
-                    fuente_barras, ruta_ordenes, ruta_nivel, 'eval', dia_de_hoy,
-                    reloj=reloj, dormir=dormir)
-                resuelve_funded = resolucion_en_vivo.ResuelveDiaEnVivo(
-                    adaptador, cuenta_hedge_funded, cuenta_prop_funded, instrumento_prop, direccion,
-                    fuente_barras, ruta_ordenes, ruta_nivel, 'funded', dia_de_hoy,
-                    reloj=reloj, dormir=dormir)
+                resuelve_concurrente = partial(
+                    bucle_de_tiempo.resuelve_dia_concurrente,
+                    adaptador=adaptador, fuente_barras=fuente_barras,
+                    cuenta_hedge_eval=cuenta_hedge_eval, cuenta_prop_eval=cuenta_prop_eval,
+                    cuenta_hedge_funded=cuenta_hedge_funded, cuenta_prop_funded=cuenta_prop_funded,
+                    instrumento_prop=instrumento_prop, ruta_ordenes=ruta_ordenes,
+                    ruta_nivel=ruta_nivel, dia_negociacion=dia_de_hoy, reloj=reloj, dormir=dormir)
 
             st, fin_de_dia, diario = orquestador.procesa_dia(
                 st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
                 resuelve_dia_eval=resuelve_eval, resuelve_dia_funded=resuelve_funded,
-                modo_auto_confirma=modo_auto_confirma)
+                modo_auto_confirma=modo_auto_confirma, resuelve_concurrente=resuelve_concurrente)
 
             _, checksum_actual = config.cargar()
             fallos = estado.validar(st, checksum_actual)

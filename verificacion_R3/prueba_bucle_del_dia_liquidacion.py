@@ -38,21 +38,21 @@ class FuenteEnVivoDePrueba:
     solo día de barras COMPLETAMENTE PLANAS (ph=pl=pc=precio_flat, el mismo
     precio del fill de apertura por defecto de `AdaptadorFalso`, 100.0) --
     así el bracket de D8.2 nunca se resuelve solo, y la vigilancia solo
-    termina por liquidación forzosa (o por el tope de barras, red de
-    seguridad de la propia prueba).
+    termina por la liquidación forzosa (o por el tope de barras, red de
+    seguridad de la propia prueba, si -- tras la liquidación -- toca
+    empalme y ese intento nuevo sigue sin resolverse él solo).
 
-    En CADA barra servida, si la prop tiene posición abierta, la fabrica
-    liquidada (`adaptador.fuerza_posicion_externa(..., 0)`) -- el chequeo
-    de `detecta_liquidacion_forzosa` de la SIGUIENTE vuelta del bucle de
-    `ResuelveDiaEnVivo.__call__` (que comprueba la posición ANTES de pedir
-    la siguiente barra) es quien la detecta de verdad. Esto es a propósito
-    más agresivo que "forzar una vez": `ciclo_vida.procesa_dia_eval` puede
-    reabrir una sub nueva el MISMO día tras una muerte (empalme, R-3/R-4 --
-    la causa de la muerte, sea un stop o una liquidación externa, no
-    cambia esa mecánica) -- forzar en cada barra demuestra que D8.3 caza
-    la liquidación forzosa TAMBIÉN en el empalme, no solo en el primer
-    intento del día, y garantiza que la prueba termina sin dejar ninguna
-    reapertura sin cazar."""
+    Fabrica la liquidación externa UNA SOLA VEZ
+    (`adaptador.fuerza_posicion_externa(..., 0)`) -- un evento real de
+    liquidación no es algo que ocurra en CADA tick para siempre; es un
+    suceso puntual, y eso es justo lo que D8.3 tiene que cazar. Forzar en
+    cada tick (probado y descartado -- ver el commit de la reestructuración
+    D8.4 concurrente) no converge nunca con el bucle de tiempo compartido:
+    cada empalme reabre y se liquida en el MISMO tick antes de que
+    `barra_evento` avance ni una barra, así que la ventana de empalme
+    (`empalme_barra_limite`) nunca llega a cerrarse -- un patrón que ni
+    siquiera corresponde a nada real (una liquidación externa perpetua,
+    tick tras tick, no existe en ningún bróker)."""
 
     def __init__(self, adaptador, cuenta_prop, instrumento_prop, precio_flat, tope_barras=200):
         self.adaptador = adaptador
@@ -63,6 +63,7 @@ class FuenteEnVivoDePrueba:
         self._dia_abierto = False
         self._b = -1
         self.n_forzados = 0
+        self._ya_forzado = False
 
     def dia_disponible(self):
         return not self._dia_abierto
@@ -74,10 +75,12 @@ class FuenteEnVivoDePrueba:
 
     def siguiente_barra(self):
         self._b += 1
-        pos, _ = self.adaptador.leer_posicion(self.cuenta_prop, self.instrumento_prop)
-        if pos != 0:
-            self.n_forzados += 1
-            self.adaptador.fuerza_posicion_externa(self.cuenta_prop, self.instrumento_prop, 0)
+        if not self._ya_forzado:
+            pos, _ = self.adaptador.leer_posicion(self.cuenta_prop, self.instrumento_prop)
+            if pos != 0:
+                self.n_forzados += 1
+                self._ya_forzado = True
+                self.adaptador.fuerza_posicion_externa(self.cuenta_prop, self.instrumento_prop, 0)
         p = self.precio_flat
         return Barra(b=self._b, ph=p, pl=p, pc=p,
                      es_ultima_barra_operable=(self._b >= self.tope_barras))

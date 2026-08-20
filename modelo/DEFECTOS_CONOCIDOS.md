@@ -66,3 +66,46 @@ python modelo/cifras_citadas.py      # regenera las cifras con el dict de config
 
 Si alguna vez uno de estos defectos entra en la ruta activa, la cifra se moverá y
 `comprueba_config.py` o el replay lo cazarán. **Ninguno se arregla sin permiso explícito.**
+
+---
+
+## D-5 (`bot/`, NO `modelo/`) · `qok` causal en vivo
+
+A diferencia de D-1 a D-4, este NO es un defecto de `pipeline3.py` -- `modelo/` sigue
+intacto y R6 sigue aplicando igual. Se registra aquí porque el operador pidió una sola
+lista de defectos conocidos y asumidos (`RESPUESTA_D8_CONCURRENCIA.md` §5), no porque
+`modelo/` haya cambiado.
+
+**El defecto:** el motor congelado (y por tanto el replay de 504 días) evalúa el tope de
+recámara (`qcap_abierto_por_tesoreria`, R-4.6) con la caja del día **DESPUÉS** de sumar el
+P&L de funded de hoy (`orquestador.procesa_dia()`, camino de replay: funded se procesa
+primero, y `qok` de eval se calcula con `st["caja"]` ya actualizada). El bot en vivo
+(`bot/bucle_de_tiempo.py`, D8.4 reestructuración, 20-08-2026) resuelve funded y eval A LA
+VEZ, por un bucle de tiempo compartido -- así que `qok` solo puede calcularse con la caja
+de **INICIO** de día, antes de que corra ninguna sesión de hoy: usar el P&L de funded de
+HOY para decidir si eval puede abrir HOY sería mirar al futuro de la propia sesión de hoy,
+imposible en un bot real.
+
+**Por qué existe (no es un bug):** con `ResuelveDiaEnVivo` (bloqueante, dueño de su propio
+cursor de barras) eval no podía empezar su sesión hasta que funded resolviera la SUYA
+entera, si las dos estaban activas el mismo día -- medido contra el pack: 222/504 días
+(44 %). La reestructuración a un bucle de tiempo compartido es la corrección de ESE bug
+real; el precio es que `qok` deja de poder mirar el resultado de funded de hoy.
+
+**Medido, no estimado:** sobre `tests/replay_v10.json`, el orden `funded→eval` (el del
+motor congelado) solo cambia el valor de `qok` en **1 de 504 días** (el día 269 --
+`caja − retirado` cruza `qcap_tes_usd` = 10.000 $ durante ESE mismo día, por el P&L de
+funded). Corriendo el replay completo con `qok` causal en vez de con el orden actual:
+
+| | caja final |
+|---|---|
+| orden actual (contrato del motor congelado) | 29.134,87 $ |
+| `qok` causal (lo que verá el bot real) | 29.085,13 $ |
+| diferencia | −49,74 $ en 504 días (≈ −2,07 $/mes, ≈ −0,17 %) |
+
+**No se corrige:** corregirlo exigiría que el bot conociera el futuro de la sesión de hoy
+de funded antes de que termine. LA PUERTA GRANDE (`ORDEN_DE_TRABAJO_D8.md` §4) se corre en
+dos pasadas precisamente por esto -- Pasada A (fidelidad, `qok` del contrato inyectado por
+el arnés) exige 0 discrepancias contra el replay; Pasada B (causalidad, el `qok` real que
+usará el bot) exige que la ÚNICA divergencia sea, exactamente, la de este defecto (día 269,
+−49,74 $) -- si diverge en cualquier otro día, es un bug de verdad, no este defecto.

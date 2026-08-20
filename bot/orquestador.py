@@ -50,7 +50,8 @@ from bot import config, estado as E, calendario, ciclo_vida as CV, tesoreria as 
 
 
 def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
-                 resuelve_dia_eval=None, resuelve_dia_funded=None, modo_auto_confirma=True):
+                 resuelve_dia_eval=None, resuelve_dia_funded=None, modo_auto_confirma=True,
+                 resuelve_concurrente=None):
     """D8.4 (ORDEN_DE_TRABAJO_D8.md §0, revisión 20-08-2026, diseño grounded vía
     panel de ángulos + síntesis): el pegamento COMPARTIDO de un día -- pool,
     funded, eval, tesorería, retiro, `contra_pendiente` de mañana -- extraído
@@ -73,6 +74,26 @@ def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
     `ciclo_vida.py` (`sesion.resolver_dia`) -- así que `procesa_dia_replay`
     (su único llamador hasta hoy) no cambia de comportamiento ni un bit.
 
+    `resuelve_concurrente` (D8.4 reestructuración, RESPUESTA_D8_CONCURRENCIA.md
+    §3, 20-08-2026): callable `(st, direccion, b0v, qok, modo_auto_confirma)
+    -> (r_funded_o_None, r_eval)`, normalmente
+    `bot.bucle_de_tiempo.resuelve_dia_concurrente` con el resto de sus
+    argumentos ya ligados por el llamador (`bot/bucle_del_dia.py`). Si se
+    da, SUSTITUYE el camino de siempre (`CV.procesa_dia_funded`/
+    `procesa_dia_eval`, cada uno con su propia llamada bloqueante a
+    `resuelve_dia`) por UNA sola llamada que resuelve funded y eval A LA
+    VEZ, por el bucle de tiempo compartido -- necesario porque, con
+    `ResuelveDiaEnVivo` (bloqueante, dueño de su propio cursor de
+    `fuente_barras`), eval no podía empezar su sesión hasta que funded
+    resolviera la SUYA entera, si las dos estaban activas el mismo día
+    (medido: 222/504 días del pack, 44 %). `resuelve_dia_eval`/
+    `resuelve_dia_funded` se ignoran si `resuelve_concurrente` no es
+    `None` (son mecanismos alternativos para el mismo propósito -- D8.4
+    pasos 1-3 vs paso 4). `qok` se calcula aquí CAUSALMENTE (con la caja
+    de INICIO de día, antes de que corra ninguna sesión de hoy) en vez de
+    con la caja YA actualizada por funded -- ver el defecto conocido en
+    `RESPUESTA_D8_CONCURRENCIA.md` §2/§5 (medido: 1/504 días, -49,74 $).
+
     Devuelve (st_nuevo, fin_de_dia_dict, diario_linea_dict) -- misma forma
     que siempre.
     """
@@ -89,31 +110,51 @@ def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
     ev_dia = dict(intentos=0, aprobaciones=0, muertes_funded=0, muertes_eval=0,
                   resets=n_resets_hoy, emergencias=0, recompras=0, cuotas_dia=0.0)
 
-    # --- funded: relevo (R-5.1) + sesión (R-5.2 a R-5.5) ------------------------
+    # --- funded: relevo (R-5.1) -- SIEMPRE igual, en los dos caminos ------------
     st["funded"], st["recamara"]["dormidas"], activada_hoy = CV.activa_funded_si_toca(
         st["funded"], st["recamara"]["dormidas"])
     st["recamara"]["n"] = len(st["recamara"]["dormidas"])
     st["recamara"]["sunk_total"] = sum(d["s0"] for d in st["recamara"]["dormidas"])
-    if st["funded"]["activa"]:
-        r = CV.procesa_dia_funded(st["funded"], direccion, ph, pl, pc, b0v,
-                                   es_dia_nuevo=activada_hoy, **kwargs_funded)
-        st["funded"] = r["funded_estado"]
-        st["caja"] += r["caja_delta"]
-        hubo_muerte_hoy = hubo_muerte_hoy or r["hubo_muerte"]
-        ev_dia["muertes_funded"] += r["eventos"]["muertes_funded"]
+
+    if resuelve_concurrente is not None:
+        # D8.4 CAMINO EN VIVO CONCURRENTE (paso 4/5) -- funded y eval se
+        # resuelven JUNTAS, por bot/bucle_de_tiempo.py. qok CAUSAL (ver
+        # docstring arriba), calculado ANTES de resolver nada de hoy.
+        qok = CV.qcap_abierto(st["recamara"]["n"]) or CV.qcap_abierto_por_tesoreria(
+            st["caja"], st["retirado"])
+        r_funded, r_eval = resuelve_concurrente(st, direccion, b0v, qok, modo_auto_confirma)
+        if r_funded is not None:
+            st["funded"] = r_funded["funded_estado"]
+            st["caja"] += r_funded["caja_delta"]
+            hubo_muerte_hoy = hubo_muerte_hoy or r_funded["hubo_muerte"]
+            ev_dia["muertes_funded"] += r_funded["eventos"]["muertes_funded"]
+        else:
+            st["funded"]["espera"] = max(st["funded"]["espera"] - 1, 0)
     else:
-        st["funded"]["espera"] = max(st["funded"]["espera"] - 1, 0)
+        # camino de SIEMPRE (replay + D8.4 pasos 1-3, un solo slot en vivo a
+        # la vez) -- SIN CAMBIOS.
+        if st["funded"]["activa"]:
+            r = CV.procesa_dia_funded(st["funded"], direccion, ph, pl, pc, b0v,
+                                       es_dia_nuevo=activada_hoy, **kwargs_funded)
+            st["funded"] = r["funded_estado"]
+            st["caja"] += r["caja_delta"]
+            hubo_muerte_hoy = hubo_muerte_hoy or r["hubo_muerte"]
+            ev_dia["muertes_funded"] += r["eventos"]["muertes_funded"]
+        else:
+            st["funded"]["espera"] = max(st["funded"]["espera"] - 1, 0)
+        # --- eval: qcap se evalua UNA vez, con el estado ya actualizado por funded --
+        qok = CV.qcap_abierto(st["recamara"]["n"]) or CV.qcap_abierto_por_tesoreria(
+            st["caja"], st["retirado"])
+        r_eval = CV.procesa_dia_eval(st["eval"], st["pool"], st["recamara"]["dormidas"],
+                                      direccion, ph, pl, pc, b0v, qok,
+                                      modo_auto_confirma=modo_auto_confirma,
+                                      estado=st, dia_actual=st["dia_negociacion"] + 1, **kwargs_eval)
+
     peor_dia_funded = 0.0
     if st["funded"]["activa"] or hubo_muerte_hoy:
         pass  # el detalle de peor_dia_funded/eval es diagnostico; ver runner propio mas abajo
 
-    # --- eval: qcap se evalua UNA vez, con el estado ya actualizado por funded --
-    qok = CV.qcap_abierto(st["recamara"]["n"]) or CV.qcap_abierto_por_tesoreria(
-        st["caja"], st["retirado"])
-    r_eval = CV.procesa_dia_eval(st["eval"], st["pool"], st["recamara"]["dormidas"],
-                                  direccion, ph, pl, pc, b0v, qok,
-                                  modo_auto_confirma=modo_auto_confirma,
-                                  estado=st, dia_actual=st["dia_negociacion"] + 1, **kwargs_eval)
+    # --- aplicar r_eval a st -- IGUAL sin importar de qué camino vino ----------
     st["eval"] = r_eval["eval_estado"]
     st["pool"] = r_eval["pool_estado"]
     st["caja"] += r_eval["caja_delta"]
