@@ -76,6 +76,16 @@ class ClienteControl:
         return self._llamar("fuerza_posicion_externa", cuenta=cuenta,
                              instrumento=instrumento, cantidad=cantidad)
 
+    def fabrica_resolucion_bracket(self, id_grupo_oco, pierna, precio_fill=None):
+        return self._llamar("fabrica_resolucion_bracket", id_grupo_oco=id_grupo_oco,
+                             pierna=pierna, precio_fill=precio_fill)
+
+    def fabrica_doble_fill_bracket(self, id_grupo_oco, precio_fill_stop=None,
+                                    precio_fill_limite=None):
+        return self._llamar("fabrica_doble_fill_bracket", id_grupo_oco=id_grupo_oco,
+                             precio_fill_stop=precio_fill_stop,
+                             precio_fill_limite=precio_fill_limite)
+
     def activa_rechazo_cantidad_cero(self, activo=True):
         return self._llamar("activa_rechazo_cantidad_cero", activo=activo)
 

@@ -47,7 +47,8 @@ Cualquier camino (A/B/C, §2) tiene que poder implementar exactamente esto:
 |---|---|---|---|
 | `abrir(cuenta, instrumento, direccion, cantidad)` | cuenta, instrumento, dirección (+1/−1), cantidad (`k` o `m`, ya resueltos por `sizing.py`) | `order_id`, estado inicial | la dirección la decide `calendario.py`; el adaptador nunca decide cuándo ni cuánto, solo ejecuta |
 | `aplanar(cuenta, instrumento)` | cuenta, instrumento | `order_id`, estado | usado en el cierre de campana (barra 85, Arquitectura §5) y en el aborto por timeout de la pata prop (§5) |
-| `cancelar(order_id)` | `order_id` | confirmación | solo aplica a órdenes no llenas |
+| `coloca_bracket(cuenta, instrumento, direccion_cierre, cantidad, precio_stop, precio_limite)` | cuenta, instrumento, dirección de CIERRE (+1/−1), cantidad, `precio_stop`/`precio_limite` (`p0∓ndn`/`p0+nu`, ya resueltos por `sizing.py`) | `{order_id_stop, order_id_limite, id_grupo_oco}` | **D8.2 (ORDEN_DE_TRABAJO_D8.md §1), añadida revisión 5.** OPERACIÓN DE SALIDA: solo válida sobre una posición ya confirmada abierta vía `abrir()`. Coloca en UNA sola llamada las DOS órdenes en reposo (stop de suelo, límite de objetivo), agrupadas por el adaptador en un grupo OCO — en cuanto una alcanza `LLENA`, el adaptador transiciona la otra a `CANCELADA` sin intervención de quien llama. Es la única operación del puerto que devuelve un diccionario en vez de un `order_id` único (irregularidad reconocida). El detector en vivo (`bot/detector_en_vivo.py`) sirve para SABER QUÉ PASÓ (reloj de sesión + oráculo de diagnóstico), nunca para DECIDIR SALIR — la decisión de negocio la determina el fill real de esta operación. |
+| `cancelar(order_id)` | `order_id` | confirmación, veraz | solo aplica a órdenes no llenas: **idempotente y veraz sobre el estado terminal real** — si `order_id` ya está `LLENA`, devuelve `LLENA`, nunca fabrica `CANCELADA` sobre una orden que de hecho se ejecutó (contrato ya vigente, precisado por escrito en la revisión 5). Cuando `order_id` pertenece a un grupo OCO creado por `coloca_bracket()`, cancelar CUALQUIERA de las dos patas cancela el GRUPO COMPLETO — nunca deja una pata huérfana viva. |
 | `leer_posicion(cuenta, instrumento)` | cuenta, instrumento | cantidad neta, precio medio de entrada | insumo de la reconciliación de arranque (§6) |
 | `leer_fill(order_id)` | `order_id` | lleno (bool), cantidad llenada, precio medio | por sondeo, no por evento — ver §4 |
 | `leer_estado_orden(order_id)` | `order_id` | enviada / aceptada / parcial / llena / rechazada / cancelada | §4 |
@@ -390,6 +391,34 @@ FASE HEDGE (cierre)  (solo se llega aquí con el cierre de la prop YA confirmado
 **insistiendo hasta completar** el cierre (abandonar deja una posición real viva, que es lo peligroso).
 Es el mismo objetivo — plano a los dos lados — alcanzado por el camino contrario según se abra o se
 cierre. No hay pregunta pendiente aquí.
+
+### 5.4 · Salida por bracket, fin de sesión y caso residual de doble-fill (D8.2, revisión 5)
+
+`coloca_bracket()` se invoca una sola vez por ciclo, tras confirmar la apertura de ambas patas (§5.3,
+sin cambios) — nunca participa en la lógica de entrada. D8 vigila las dos patas por sondeo de
+`leer_estado_orden()`/`leer_fill()` a la cadencia de tick del bucle en vivo, y en paralelo sigue
+alimentando `bot/detector_en_vivo.py` barra a barra como reloj de sesión y oráculo de diagnóstico — no
+de decisión (§1, fila `coloca_bracket`).
+
+**Camino feliz (una pata llena).** El adaptador auto-cancela la hermana (garantía primaria del OCO).
+D8 llama igualmente `cancelar()` sobre la hermana en cuanto observa `LLENA` — no porque lo necesite en
+el camino feliz, sino como defensa idempotente barata (una llamada extra, sin efecto si el adaptador ya
+resolvió) contra un adaptador real cuyo OCO nativo resulte menos perfecto de lo esperado. Solo entonces
+se da el día por cerrado — nunca antes de confirmar la cancelación de la hermana.
+
+**Ninguna pata llena antes de la campana.** D8 cancela el grupo (`cancelar()` sobre cualquiera de los
+dos `order_id`) y fuerza cierre a mercado con `aplanar()`, exactamente el caso "ninguno toca" del
+modelo.
+
+**Caso residual (doble-fill).** Si por una falla de fidelidad del adaptador real ambas patas llegan a
+`LLENA`, D8 lo detecta porque `cancelar()` sobre la "perdedora" devuelve `LLENA` en vez de `CANCELADA`
+(de ahí que `cancelar()` tenga que ser veraz — ver §1). R-3.3 (el suelo gana el empate) se aplica
+también al mundo real: la pata stop gobierna el resultado de negocio; la posición neta sobrante se
+corrige de inmediato con `aplanar()`; el P&L de la pata perdedora que igual llenó se contabiliza aparte,
+como coste de incidente, nunca como parte de `h` del modelo. Fabricable en pruebas con
+`AdaptadorFalso.fabrica_doble_fill_bracket()` / `simulador_nt8` (canal de control,
+`fabrica_doble_fill_bracket`), nunca alcanzable por el camino normal del simulador (que sí mantiene el
+OCO) — existe solo para que D8 tenga una rama de incidente real que ejercitar.
 
 ---
 
@@ -761,3 +790,31 @@ una actualización de NT8, no hay a quién preguntar. Mitigaciones concretas:
   batería original (D0, D1, Fase 1, D2, `romper_mi_orquestador.py`, `prueba_protocolo_dos_patas.py`,
   `prueba_comandos.py`, `prueba_dashboard.py`, paleta) re-verificadas en verde tras estos cambios. Ninguno
   toca `adaptadores/`, `tests/`, ni `modelo/`.
+- **20-08-2026, revisión 5** — `ORDEN_DE_TRABAJO_D8.md` §1 (D8.2): se añade `coloca_bracket()` (OCO
+  gestionado por el adaptador, colocación atómica de las dos patas en una sola llamada) como mecanismo de
+  SALIDA, separado de `bot/detector_en_vivo.py` (que pasa de disparador de decisión a reloj de fin de
+  sesión y oráculo de diagnóstico en producción — su interfaz y lógica NO se modifican, R6). Motivo:
+  hallazgo del operador de que una salida reactiva a mercado disparada por detección al cierre de barra
+  desplaza `dx` (y por tanto `h`) respecto al modelo — "al abrir hay que dejar puestas: stop en el suelo,
+  límite en el objetivo, y usar el detector para SABER QUÉ PASÓ, no para DECIDIR SALIR". Se precisa el
+  contrato de `cancelar()` (idempotente, veraz sobre `LLENA`) como consecuencia directa — D8 depende de
+  esa veracidad para detectar el caso residual de doble-fill (§5.4). Compatibilidad con timeouts
+  `N`/`N_hedge` (§5.3): sin cambios — `coloca_bracket()` se coloca estrictamente después de confirmada la
+  apertura de ambas patas, nunca participa en la lógica de entrada.
+
+  Implementado en `bot/adaptador_falso.py` (aditivo puro: toda orden sin `grupo_oco` sigue exactamente
+  igual que antes — pin R3-0 verificado: `cancelar()` sobre una orden `LLENA` sin grupo sigue devolviendo
+  `LLENA`), cableado en `simulador_nt8/` (`servidor.py::METODOS_CONTRATO` para el canal de datos;
+  `motor.py::_FABRICAS_PERMITIDAS` para las dos fábricas de escenario nuevas del canal de control,
+  `fabrica_resolucion_bracket`/`fabrica_doble_fill_bracket` — la misma lista blanca cerrada de la
+  revisión 4, hallazgo 4). R3 en dos capas: en proceso
+  (`verificacion_R3/prueba_bracket_ordenes_reposo.py`, 19/19 — R3-0 a R3-6 y R3-11) y end-to-end cruzando
+  el socket real (`integracion_proceso_real/prueba_bracket_ordenes_reposo.py`, 7/7 — la puerta EXACTA que
+  pide `ORDEN_DE_TRABAJO_D8.md` §1: "fabrica en el simulador un día en que las dos órdenes en reposo
+  podrían dispararse, y demuestra que solo una queda y la otra se cancela confirmada"). Batería completa
+  re-verificada sin regresión (D0, replay 504 días, `prueba_protocolo_dos_patas.py`, batería de
+  `integracion_proceso_real/` previa). `sesion.py` NO se tocó (R6: "pasa los 14 goldens y ningún delta
+  posterior lo toca") — la clasificación muere/pausa/objetivo contra `dx` real, necesaria para D8.4, se
+  reimplementará de forma independiente y se verificará por equivalencia contra `resolver_dia` como
+  oráculo, mismo patrón que `bot/detector_en_vivo.py` (0/902 discrepancias) — nunca por extracción del
+  fichero congelado.

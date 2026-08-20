@@ -45,7 +45,9 @@ class MotorSimulado:
     # revisión 5 (o su continuación) para el detalle).
     _FABRICAS_PERMITIDAS = frozenset({"programa_abrir", "programa_aplanar",
                                        "desconecta", "fuerza_fill",
-                                       "fuerza_posicion_externa"})
+                                       "fuerza_posicion_externa",
+                                       "fabrica_resolucion_bracket",
+                                       "fabrica_doble_fill_bracket"})
 
     def __init__(self):
         self._falso = AdaptadorFalso(reloj=time.monotonic)

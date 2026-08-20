@@ -114,6 +114,19 @@ class AdaptadorSimuladorNT8:
     def cancelar(self, order_id):
         return self._enviar("cancelar", {"order_id": order_id})
 
+    def coloca_bracket(self, cuenta, instrumento, direccion_cierre, cantidad,
+                        precio_stop, precio_limite):
+        """D8.2, ORDEN_DE_TRABAJO_D8.md §1: coloca las dos patas en reposo
+        (stop de suelo, límite de objetivo) en una sola ida y vuelta.
+        Devuelve {order_id_stop, order_id_limite, id_grupo_oco} -- ya
+        JSON-nativo (dict), sin necesidad de reconstrucción de tupla como
+        `leer_fill()`/`leer_posicion()`."""
+        return self._enviar("coloca_bracket", {
+            "cuenta": cuenta, "instrumento": instrumento,
+            "direccion_cierre": direccion_cierre, "cantidad": cantidad,
+            "precio_stop": precio_stop, "precio_limite": precio_limite,
+        })
+
     def leer_estado_orden(self, order_id):
         return self._enviar("leer_estado_orden", {"order_id": order_id})
 

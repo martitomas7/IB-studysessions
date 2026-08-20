@@ -38,6 +38,7 @@ from .errores import ErrorSimuladorNT8
 METODOS_CONTRATO = frozenset({
     "arrancar", "parar", "hay_conexion", "leer_cuenta", "abrir",
     "aplanar", "cancelar", "leer_estado_orden", "leer_fill", "leer_posicion",
+    "coloca_bracket",  # D8.2, ORDEN_DE_TRABAJO_D8.md §1: operación de salida en reposo
 })
 
 # métodos del puerto cuyo resultado es una TUPLA en AdaptadorFalso -- JSON no

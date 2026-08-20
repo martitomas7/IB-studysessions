@@ -63,6 +63,8 @@ class AdaptadorFalso:
         self._plan_aplanar = {}       # (cuenta, instrumento) -> lista de resultados por intento
         self._proximo_comportamiento = {}  # (cuenta, instrumento) -> dict, para la PROXIMA abrir()
         self.eventos = []             # log crudo, solo para diagnostico/pruebas
+        self._grupos_oco = {}         # id_grupo_oco -> (order_id_stop, order_id_limite)
+        self._contador_oco = itertools.count(1)
 
     def programa_abrir(self, cuenta, instrumento, **comportamiento):
         """Pre-registra el `comportamiento` (fill_en_s / en_cancelar / rechazar /
@@ -135,13 +137,19 @@ class AdaptadorFalso:
             comportamiento = {**(comportamiento or {}), 'rechazar': True}
         return self._nueva_orden('aplanar', cuenta, instrumento, direccion, cantidad, comportamiento)
 
-    def _nueva_orden(self, tipo, cuenta, instrumento, direccion, cantidad, comportamiento):
+    def _nueva_orden(self, tipo, cuenta, instrumento, direccion, cantidad, comportamiento,
+                      estilo='MERCADO', precio=None, grupo_oco=None):
         oid = f"FAKE-{next(self._contador)}"
         self.ordenes[oid] = dict(
             order_id=oid, tipo=tipo, cuenta=cuenta, instrumento=instrumento,
             direccion=direccion, cantidad=cantidad, estado='ENVIADA',
             cantidad_llenada=0.0, precio_medio=None,
             ts_creacion=self.reloj(), cancelacion_pedida=False,
+            # D8.2 (ORDEN_DE_TRABAJO_D8.md §1): estilo/precio/grupo_oco son
+            # aditivos -- toda orden previa (abrir/aplanar, sin bracket)
+            # sigue con estilo='MERCADO', precio=None, grupo_oco=None,
+            # exactamente como antes de que existiera coloca_bracket().
+            estilo=estilo, precio=precio, grupo_oco=grupo_oco,
         )
         comp = dict(comportamiento or {})
         comp.setdefault('fill_en_s', self.FILL_EN_S_POR_DEFECTO)
@@ -149,12 +157,89 @@ class AdaptadorFalso:
         self.eventos.append(('CREADA', oid, tipo, cuenta, instrumento, direccion, cantidad))
         return oid
 
+    # --- D8.2: órdenes en reposo (bracket OCO) --------------------------
+    def coloca_bracket(self, cuenta, instrumento, direccion_cierre, cantidad,
+                        precio_stop, precio_limite):
+        """ORDEN_DE_TRABAJO_D8.md §1 (D8.2): coloca, en una sola llamada, las
+        DOS patas EN REPOSO -- stop en el suelo, límite en el objetivo --
+        agrupadas en un grupo OCO. `precio_stop`/`precio_limite` vienen ya
+        resueltos de `sizing.py::plan()` (p0-ndn, p0+nu) -- esta operación
+        no calcula ni valida esos números, solo los coloca (mismo principio
+        que el resto del puerto: "el adaptador nunca decide cuándo ni
+        cuánto").
+
+        A diferencia de `abrir()`/`aplanar()` (que llenan solas al primer
+        sondeo, comportamiento por defecto pensado para el camino feliz),
+        las dos patas de un bracket NUNCA auto-llenan por temporización
+        (`fill_en_s=None`): este simulador no modela una trayectoria de
+        precio real, así que una pata en reposo se queda viva hasta que una
+        prueba resuelve explícitamente cuál "toca precio" -- ver
+        `fabrica_resolucion_bracket()`.
+
+        Devuelve {order_id_stop, order_id_limite, id_grupo_oco} -- la única
+        operación del puerto que devuelve un diccionario en vez de un
+        `order_id` único, porque coloca DOS órdenes de una vez."""
+        grupo = f"OCO-{next(self._contador_oco)}"
+        oid_stop = self._nueva_orden('bracket_stop', cuenta, instrumento, direccion_cierre,
+                                      cantidad, {'fill_en_s': None}, estilo='STOP',
+                                      precio=precio_stop, grupo_oco=grupo)
+        oid_lim = self._nueva_orden('bracket_limite', cuenta, instrumento, direccion_cierre,
+                                     cantidad, {'fill_en_s': None}, estilo='LIMITE',
+                                     precio=precio_limite, grupo_oco=grupo)
+        self._grupos_oco[grupo] = (oid_stop, oid_lim)
+        self.eventos.append(('BRACKET_COLOCADO', grupo, oid_stop, oid_lim))
+        return dict(order_id_stop=oid_stop, order_id_limite=oid_lim, id_grupo_oco=grupo)
+
+    def fabrica_resolucion_bracket(self, id_grupo_oco, pierna, precio_fill=None):
+        """SOLO PRUEBAS -- fabrica a propósito qué pata "toca precio":
+        `pierna` ∈ {'stop', 'limite'}. La pata objetivo se llena (vía
+        `_llena()`, que auto-cancela la hermana -- ver más abajo).
+        `precio_fill=None` llena EXACTAMENTE al nivel pedido (pass 1 de la
+        puerta grande, ORDEN_DE_TRABAJO_D8.md §4: fills perfectos, sin
+        deslizamiento); un `precio_fill` explícito fabrica deslizamiento
+        (pass 2)."""
+        oid_stop, oid_lim = self._grupos_oco[id_grupo_oco]
+        oid_objetivo = oid_stop if pierna == 'stop' else oid_lim
+        o = self.ordenes[oid_objetivo]
+        precio = precio_fill if precio_fill is not None else o['precio']
+        self._llena(o, precio=precio)
+
+    def fabrica_doble_fill_bracket(self, id_grupo_oco, precio_fill_stop=None, precio_fill_limite=None):
+        """SOLO PRUEBAS -- fabrica el caso residual que 10_SEGURIDAD.md y el
+        pedido de trabajo D8 reconocen como posible con un OCO real
+        imperfecto: AMBAS patas llegan a LLENA. Deliberadamente NO pasa por
+        `_llena()` (que auto-cancelaría la hermana) -- rellena las dos a
+        mano, sin autocancelación cruzada, para darle a D8 un caso real que
+        ejercitar en su rama de incidente. No representa el comportamiento
+        normal del simulador (que sí mantiene el OCO); solo existe para
+        fabricar el escenario a propósito."""
+        oid_stop, oid_lim = self._grupos_oco[id_grupo_oco]
+        for oid, precio_fill in ((oid_stop, precio_fill_stop), (oid_lim, precio_fill_limite)):
+            o = self.ordenes[oid]
+            o['estado'] = 'LLENA'
+            o['cantidad_llenada'] = o['cantidad']
+            o['precio_medio'] = precio_fill if precio_fill is not None else o['precio']
+            clave = (o['cuenta'], o['instrumento'])
+            self.posiciones[clave] = self.posiciones.get(clave, 0) + o['direccion'] * o['cantidad']
+            self.eventos.append(('LLENA_SIN_AUTOCANCELAR_OCO', oid))
+
     def cancelar(self, order_id):
         """§4: 'solo aplica a órdenes no llenas'. `comportamiento['en_cancelar']`
         (un callable `hook(adaptador, orden)`) decide la carrera
         cancelar-vs-fill -- así se fabrica a propósito el escenario que
         07_ADAPTADOR_NT8.md §5.3 (revisión 2) tiene que resolver bien: si el
-        hook no está, la cancelación es limpia (gana el cancelar)."""
+        hook no está, la cancelación es limpia (gana el cancelar).
+
+        Idempotente y veraz (D8.2, ORDEN_DE_TRABAJO_D8.md §1): si `order_id`
+        ya está `LLENA`, esto devuelve `LLENA` -- NUNCA fabrica `CANCELADA`
+        sobre una orden que de hecho se ejecutó (ya era así antes de D8.2,
+        se deja documentado aquí porque D8.2 depende de esta garantía).
+
+        Grupo OCO: si `order_id` pertenece a un grupo colocado por
+        `coloca_bracket()`, cancelar CUALQUIERA de las dos patas cancela el
+        GRUPO COMPLETO -- nunca deja una pata huérfana viva. Una pata ya
+        `LLENA` del grupo nunca se toca (ni se pisa su estado ni se re-
+        cancela)."""
         o = self.ordenes[order_id]
         self._avanza(o)
         if o['estado'] in ('LLENA', 'CANCELADA', 'RECHAZADA'):
@@ -167,6 +252,17 @@ class AdaptadorFalso:
         else:
             o['estado'] = 'CANCELADA'
         self.eventos.append(('CANCELAR_PEDIDO', order_id, o['estado']))
+        grupo = o.get('grupo_oco')
+        if grupo is not None:
+            for oid_hermano in self._grupos_oco.get(grupo, ()):
+                if oid_hermano == order_id:
+                    continue
+                hermano = self.ordenes[oid_hermano]
+                self._avanza(hermano)
+                if hermano['estado'] not in ('LLENA', 'CANCELADA', 'RECHAZADA'):
+                    hermano['estado'] = 'CANCELADA'
+                    hermano['cancelacion_pedida'] = True
+                    self.eventos.append(('CANCELAR_PEDIDO_GRUPO_OCO', oid_hermano, 'CANCELADA'))
         return o['estado']
 
     def leer_estado_orden(self, order_id):
@@ -223,3 +319,18 @@ class AdaptadorFalso:
         clave = (o['cuenta'], o['instrumento'])
         self.posiciones[clave] = self.posiciones.get(clave, 0) + o['direccion'] * o['cantidad']
         self.eventos.append(('LLENA', o['order_id'], self.posiciones[clave]))
+        # D8.2: si esta orden pertenece a un grupo OCO, la hermana se
+        # auto-cancela SOLA en cuanto esta llena -- sin que el llamador
+        # tenga que pedirlo. `cancelar()` desde D8 sobre la hermana sigue
+        # siendo una defensa idempotente barata (no hace nada si ya llegó
+        # aquí primero), nunca el mecanismo primario.
+        grupo = o.get('grupo_oco')
+        if grupo is not None:
+            for oid_hermano in self._grupos_oco.get(grupo, ()):
+                if oid_hermano == o['order_id']:
+                    continue
+                hermano = self.ordenes[oid_hermano]
+                if hermano['estado'] not in ('LLENA', 'CANCELADA', 'RECHAZADA'):
+                    hermano['estado'] = 'CANCELADA'
+                    hermano['cancelacion_pedida'] = True
+                    self.eventos.append(('CANCELADA_OCO_AUTOMATICA', oid_hermano, o['order_id']))
