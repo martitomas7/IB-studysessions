@@ -230,8 +230,14 @@ def _bloque_laboratorio(ctx):
 
 
 def _bloque_incidencias(ctx):
+    # BUG real cazado en R3 (Task 22, prueba_lector_laboratorio.py, comprobación
+    # end-to-end disco->contexto_dashboard->genera_html): este bloque leía
+    # i['ts'], pero el campo que 08_LABORATORIO.md §1.4 define para una
+    # incidencia es 'ts_pared' -- nunca se había ejercitado con datos de
+    # forma real (prueba_dashboard.py no pasaba incidencias_recientes con
+    # esa forma), así que el KeyError quedaba sin cazar. Corregido.
     inc = ctx['incidencias']
-    filas = [(_esc(i['ts']), _esc(i['tipo']), _esc(i['detalle'])) for i in inc['ultimas']] or [('—', '—', '—')]
+    filas = [(_esc(i['ts_pared']), _esc(i['tipo']), _esc(i['detalle'])) for i in inc['ultimas']] or [('—', '—', '—')]
     contadores = " · ".join(f'{_esc(k)}={_num(v,0)}' for k, v in inc['contadores'].items()) or "sin incidencias"
     return f'''<section class="bloque" id="bloque-incidencias"><h2>8 · INCIDENCIAS</h2>
     <div class="atenuado">{contadores}</div>
