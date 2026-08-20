@@ -1,0 +1,64 @@
+PAQUETE DE INGENIERIA · circuito cubierto v10
+revision 3 · 19-08-2026
+
+  rev 2: incorpora la auditoria adversarial del paquete (12 hallazgos)
+  rev 3: corrige la puerta F3.1 (unidades $/micro, criterio pre-registrado medido)
+         y re-enmarca el indicador de deficit, que estaba mal elegido
+
+Si un fichero no cuadra con su sha256, el paquete esta alterado.
+
+Verificacion ejecutada sobre una copia desempaquetada de este zip:
+  tests/comprueba_config.py       -> OK + 6 auto-verificaciones detectadas
+  tests/runner_goldens_v10.py     -> 14/14 goldens OK
+  tests/prueba_goldens_v10.py     -> DISCRIMINACION OK (caen 3 / 6 / 1 goldens)
+  tests/prueba_nucleo_vs_motor.py -> 0 discrepancias sobre 60.000 estados
+  tests/runner_replay_v10.py      -> replay v10: 504 dias · 0 fallos
+  tests/prueba_replay_v10.py      -> 8 orquestadores = 1 de control + 5 detectados
+                                     + 2 declarados no-ops a R=1
+  tests/replay_v10.py             -> regenera replay_v10.json BIT-IDENTICO
+  modelo/cifras_citadas.py        -> regenera TODAS las cifras que cita la norma,
+                                     incluida la tabla de la puerta F3.1
+
+LA PUERTA QUE DA PASO AL DINERO REAL (F3.1, en 05_ORDEN_DE_CONSTRUCCION):
+  se miden friccion y deslizamiento EN $/MICRO (no por muerte: la eval lleva m=2
+  y la fondeada m=4, y confundirlo cambia la banda por un factor de 2), y se aplica
+  el criterio pre-registrado P(degradar) <= 5 %.  Medido: se rompe entre SPR 4,50
+  (4,69 %) y 4,75 (5,12 %).  La friccion decide la puerta; el deslizamiento decide
+  el EV pero apenas mueve el riesgo.
+
+sha256                                                                 bytes  fichero
+----------------------------------------------------------------------------------------------------
+6dbf7634eef7da00a7b939ed20ead04d76e297cec023a4039d9a689808684338        5488  00_LEEME_PRIMERO.md
+09155959c0bc028d44f6c903d86b0aaf470b03716217e305a6806555bd9f4721       27572  01_ESPECIFICACION_E2E.md
+3b7dad96fdf4a8b09de2a108fb9973af8d90a0e00af2b2b8793a539a7abfb40b       16511  02_ARQUITECTURA.md
+bde185a700ccd03b5fb2dd722c86b39ce2309724db59efa1dd3bf06525c1c34b       21600  03_CONFIG.yaml
+124c7ddcd20f92cd868643fcfcf476ceaeeba768d0a694305de70755c3399a84        8613  04_GUARDARRAILES_CONSTRUCCION.md
+82a9461a6b4c9956adb70e2ea6a50cfbca64d3c4565f60fee8567ac041b6042a       10333  05_ORDEN_DE_CONSTRUCCION.md
+2ee19c9a78216b43b802542ac31e103ecefce8a104b76eb7b678b9732f9a0b8f        5597  06_PROMPT_DE_ARRANQUE.md
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855           0  core/__init__.py
+49463ab270fbaf1662f5261efa65df9424fa38cde151c2233df77351c2e72d14         331  core/datos.py
+2bb9e07e28b06d42fc6679f154cc6daffa050fa429dab5978508c9f667b5989f        2939  modelo/DEFECTOS_CONOCIDOS.md
+9d508bda94092efb7e3e13145fa78ff9f45e5c0dd561a1e8717d549f2ef00bf7        5973  modelo/cifras_citadas.json
+b6d4049a3bfa5d1ebb6fa7e5db274db02a5e7ba92bc408b644467bc2459ed453       13451  modelo/cifras_citadas.py
+93c69c64db4191a62683afcc5bf335a980a8d858c0ea14757c3c947086ecb544     1230720  modelo/datos/CG22.npy
+06cd6c4260d23527057b1f480ab1e87d927f64eefff8e2acae576c48a69c83f7     1230720  modelo/datos/HG22.npy
+776ada665ae2f495fc2275e60efe7ce30b3c5d9f02386ebefa3c7a3387448594     1230720  modelo/datos/LG22.npy
+f7e9b7b3ac7068de9a251eb2f8d905a7cdc904e9ee52a8207de1bce995109b6d        6996  modelo/estres_v10.json
+e9ceb099ae9dc38319a3fd10d9cbdb0e6539b2ec27adca2e6fdb9f1d385513bc        7652  modelo/estres_v10.py
+e5608720ac0281fd6981dee8715169889eba25dc59b680d99e5dd354d6391b11        8024  modelo/modelo_v10.json
+75c79d036a72f37ee6fd776f0e22a9c64fc7fb163c5ca5488cdd54ef1751741e       12735  modelo/motor_exp.py
+fab18938242b53127961366da77f23b537d8a467b1cde57a14bfba7831bfae96       21196  modelo/pipeline2_congelado_REFERENCIA.py
+08bfb50c934660b4f3c73f31b0a49ba493c48a6339477585c7a01460df22b3a1       24170  modelo/pipeline3.py
+36e660c7833a23cddf430d41a811be2d051a21d307c14594c0e4a1c95cdda376        6006  tests/LEEME_TESTS.md
+dc27e85cc02216f79fb9d1bdb97a5693754f13c54a57e7626968ccde9f7ad35f       10291  tests/comprueba_config.py
+73ce4b193673797d81631558fb21d2114341286d271bb3cd98136c46382ca3e2        8965  tests/goldens_v10.json
+64f42d58e7b48ba92d63f0ce868fc9b621638a8f322460e95cbb1799c8175692        3023  tests/nucleo_referencia_v10.py
+9627592f18aca402a9e96f638e07f9bf288caa3993943cb7dcfb7e3d2a5995a9        4337  tests/prueba_goldens_v10.py
+02c3c7d3e6bd8e157aafe0f1b998b5d67ebf8551429881972c90b68175f1d912        6136  tests/prueba_nucleo_vs_motor.py
+50ca3979d6e18a966a4d838eb6c0890a213ca4dd43dc03fac2769a0d23b3ee9a        5484  tests/prueba_replay_v10.py
+694092b9277f3ea082cde88a163caf2c184639d6120a366947b5ced17f685c8c     2041846  tests/replay_v10.json
+81abe651f7c0e44f08d8dd3dd79405afcc4978e87fb98fec971125c49b776564       10703  tests/replay_v10.py
+874bb89b51215dcc8152d593d8bdcb1fafc7f9ebe9aa2955f0912d101f16a179         987  tests/runner_goldens_v10.py
+b78fe8140f6b7b3e35f4af4d444a2e8e4e90e977112487a44d258820eefee5f3        2656  tests/runner_replay_v10.py
+
+32 ficheros

@@ -1,0 +1,539 @@
+{
+ "version": "goldens v10 \u00b7 19-08-2026 \u00b7 motor pipeline3 (sin look-ahead, regla 4.3, deslizamiento)",
+ "convencion": "CMS=1,90 \u00b7 entrada al cierre de b0, vigilancia DESDE b0+1 \u00b7 suelo gana el empate \u00b7 si bloqueo_k_menor_1 entonces dx=comision=hedge=0 y NO hay evento",
+ "casos": [
+  {
+   "nombre": "eval_dia1_plano",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -6.0,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "eval_pausa_suelo",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       20,
+       -1.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": -6.666667,
+    "hedge_dolares": 60.6667,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": true,
+    "objetivo": false,
+    "barra_evento": 7,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "eval_muerte",
+   "entradas": {
+    "bal": -1019.76,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 99.26,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       20,
+       -3.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 40.0,
+    "dx_puntos": -5.0,
+    "hedge_dolares": 44.0,
+    "comision": 76.0,
+    "muere": true,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 2,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "eval_objetivo",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       30,
+       2.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": 20.38,
+    "hedge_dolares": -209.8,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": true,
+    "barra_evento": 10,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "funded_c1_dia1",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 481.01660000000004,
+    "H_hedge_acum": 0,
+    "friccion": 12.0,
+    "m": 4,
+    "EXP": 1480,
+    "T": 4100,
+    "dcap": 2050,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 15.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -12.0,
+    "comision": 28.5,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "funded_lock_activo",
+   "entradas": {
+    "bal": 2000,
+    "pico": 2000,
+    "G": 481.01660000000004,
+    "H_hedge_acum": -300,
+    "friccion": 12.0,
+    "m": 4,
+    "EXP": 1480,
+    "T": 4100,
+    "dcap": 2050,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 9.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -12.0,
+    "comision": 17.1,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "funded_muerte_cierre",
+   "entradas": {
+    "bal": -900,
+    "pico": 0,
+    "G": 481.01660000000004,
+    "H_hedge_acum": 200,
+    "friccion": 12.0,
+    "m": 4,
+    "EXP": 1480,
+    "T": 4100,
+    "dcap": 2050,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       -0.6
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 14.0,
+    "dx_puntos": -14.285714,
+    "hedge_dolares": 273.7143,
+    "comision": 26.6,
+    "muere": false,
+    "pausa": true,
+    "objetivo": false,
+    "barra_evento": 23,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "bloqueo_k_menor_1",
+   "entradas": {
+    "bal": 1051,
+    "pico": 1051,
+    "G": 4481.0166,
+    "H_hedge_acum": -3748,
+    "friccion": 12.0,
+    "m": 4,
+    "EXP": 1480,
+    "T": 2000,
+    "dcap": 1000,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       0.1
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 1.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": 0.0,
+    "comision": 0.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": true
+   }
+  },
+  {
+   "nombre": "empalme_barra_40",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 3.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 40,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -3.0,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "ventana_RTH_barra_62",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 481.01660000000004,
+    "H_hedge_acum": 0,
+    "friccion": 12.0,
+    "m": 4,
+    "EXP": 1480,
+    "T": 2000,
+    "dcap": 1000,
+    "kcap": 40,
+    "barra_inicio": 62,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 15.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -12.0,
+    "comision": 28.5,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "LOOKAHEAD_suelo_en_b0",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       1,
+       -40.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -6.0,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "LOOKAHEAD_objetivo_en_b0",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       1,
+       60.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -6.0,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "LOOKAHEAD_empalme_b40",
+   "entradas": {
+    "bal": 0,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 0,
+    "friccion": 3.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 40,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       41,
+       -40.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 30.0,
+    "dx_puntos": 0.0,
+    "hedge_dolares": -3.0,
+    "comision": 57.0,
+    "muere": false,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 87,
+    "bloqueo_k_menor_1": false
+   }
+  },
+  {
+   "nombre": "deslizamiento_en_muerte",
+   "entradas": {
+    "bal": -1019.76,
+    "pico": 0,
+    "G": 123.2952,
+    "H_hedge_acum": 99.26,
+    "friccion": 6.0,
+    "m": 2,
+    "EXP": 1110,
+    "T": 3000,
+    "dcap": 1e+18,
+    "kcap": 40,
+    "barra_inicio": 0,
+    "deslizamiento": 5.0,
+    "camino": {
+     "p0": 4500.0,
+     "tramos": [
+      [
+       20,
+       -3.0
+      ],
+      [
+       88,
+       0.0
+      ]
+     ]
+    }
+   },
+   "salidas": {
+    "k": 40.0,
+    "dx_puntos": -5.0,
+    "hedge_dolares": 39.0,
+    "comision": 76.0,
+    "muere": true,
+    "pausa": false,
+    "objetivo": false,
+    "barra_evento": 2,
+    "bloqueo_k_menor_1": false
+   }
+  }
+ ]
+}

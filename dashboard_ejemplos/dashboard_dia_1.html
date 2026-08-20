@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Dashboard operativo · circuito cubierto v10</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --fondo: #0b0e14; --superficie: #131826; --borde: #232a3d;
+  --texto: #e7ebf3; --atenuado: #8891a7; --muy-atenuado: #565f78;
+  --bien: #33d17a; --aviso: #e8b339;
+  --grave: #b83d16; --critico: #f0555e;
+  --acento1: #5aa9e6; --acento2: #b98af0;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--fondo); color: var(--texto); margin: 0; padding: 16px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 13px; line-height: 1.5;
+}
+.num { font-variant-numeric: tabular-nums; text-align: right; display: inline-block; min-width: 2ch; }
+.cabecera { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px;
+  border-bottom:1px solid var(--borde); padding-bottom:8px; flex-wrap: wrap; gap: 8px;}
+.cabecera h1 { font-size: 15px; margin:0; font-weight:600; }
+.atenuado { color: var(--atenuado); }
+.parrafo-limite { background: var(--superficie); border:1px solid var(--borde); border-left:3px solid var(--aviso);
+  padding:10px 12px; margin-bottom:14px; font-size:12px; color: var(--texto); }
+.rejilla { display:grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap:12px; }
+.bloque { background: var(--superficie); border:1px solid var(--borde); border-radius:4px; padding:12px 14px;
+  min-width:0; overflow:hidden; }
+.bloque h2 { font-size:12px; letter-spacing:.04em; margin:0 0 10px 0; color: var(--atenuado); font-weight:700; }
+.bloque h3 { font-size:11.5px; margin:10px 0 6px; color: var(--atenuado); font-weight:600; }
+.subseccion { margin-top:6px; }
+.bloque-riesgo, .bloque-ancho { grid-column: 1 / -1; }
+.riesgo-grande { display:flex; align-items:baseline; gap:14px; margin-bottom:10px; flex-wrap:wrap; }
+.valor-enorme { font-size:34px; font-weight:700; }
+.grid-ahora, .grid-riesgo { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap:8px; margin-bottom:8px; }
+.grid-ahora > div, .grid-riesgo > div { display:flex; flex-direction:column; gap:2px; }
+.etiqueta { color: var(--atenuado); font-size:11px; }
+.valor { font-size:16px; }
+table.tabla { width:100%; border-collapse:collapse; font-size:12px; }
+table.tabla th { text-align:left; color: var(--atenuado); font-weight:600; border-bottom:1px solid var(--borde);
+  padding:4px 10px 4px 6px; white-space:nowrap; }
+table.tabla td { padding:4px 10px 4px 6px; border-bottom:1px solid var(--borde); white-space:nowrap; }
+table.tabla tbody tr:last-child td { border-bottom:none; }
+.semaforo { display:inline-flex; align-items:center; gap:4px; padding:1px 6px; border-radius:3px;
+  font-size:11px; font-weight:700; white-space:nowrap; }
+.tabla-scroll { overflow-x:auto; max-width:100%; }
+.semaforo-bien { color: var(--bien); background: color-mix(in srgb, var(--bien) 14%, transparent); }
+.semaforo-aviso { color: var(--aviso); background: color-mix(in srgb, var(--aviso) 14%, transparent); }
+.semaforo-grave { color: var(--grave); background: color-mix(in srgb, var(--grave) 14%, transparent); }
+.semaforo-critico { color: var(--critico); background: color-mix(in srgb, var(--critico) 14%, transparent); }
+.fila-conexion, .fila-pata { display:flex; gap:10px; align-items:center; padding:2px 0; }
+.no-disponible-grande { color: var(--atenuado); font-style:italic; padding:20px 0; text-align:center; }
+.frescura { font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px; margin-left:6px; }
+.frescura-vivo { color: var(--bien); background: color-mix(in srgb, var(--bien) 14%, transparent); }
+.frescura-rancio { color: var(--aviso); background: color-mix(in srgb, var(--aviso) 14%, transparent); }
+.frescura-no-disponible { color: var(--muy-atenuado); background: transparent; }
+.barras-container { position:relative; margin:10px 0 26px; }
+.barra-fila { display:grid; grid-template-columns: 70px 1fr 110px; align-items:center; gap:8px; margin:4px 0; }
+.barra-etq { color:var(--atenuado); font-size:11px; }
+.barra-pista { background: var(--fondo); border:1px solid var(--borde); height:14px; position:relative; }
+.barra-rellena { height:100%; }
+.marcas-container { position:relative; height:14px; margin-left:78px; margin-right:110px; }
+.marca-linea { position:absolute; top:0; border-left:1px dashed var(--muy-atenuado); height:100%; }
+.marca-etq { position:absolute; top:2px; left:2px; font-size:9px; color:var(--muy-atenuado); }
+.bloque-desviaciones { grid-column: 1 / -1; border-color: var(--aviso); }
+.bloque-desviaciones h2 { color: var(--aviso); }
+.pie { margin-top:16px; color: var(--muy-atenuado); font-size:10.5px; text-align:center; }
+@media (prefers-color-scheme: light) {
+  /* Regla explícita de 08_LABORATORIO.md §6.3: "modo oscuro por defecto ...
+     no un modo claro invertido automáticamente" -- no se define un tema
+     claro: el dashboard se queda oscuro sí o sí. */
+}
+</style>
+</head>
+<body>
+  <div class="cabecera">
+    <h1>Dashboard operativo · circuito cubierto v10</h1>
+    <span class="atenuado">generado 2026-08-20T15:30:00+00:00
+      </span>
+  </div>
+  <div class="parrafo-limite">
+    <strong>El papel puede medir la mecánica del circuito y dar una cota inferior de la fricción del
+    mercado. NO puede medir la fricción real del hedge (<code>spr_usd</code>) ni el deslizamiento real
+    por muerte (<code>slip_usd_micro</code>) — esos dos solo salen de la Fase 3.1, con dinero real.
+    Cualquier cifra de este dashboard que diga "fricción confirmada" o "deslizamiento confirmado" está
+    mal.</strong> (08_LABORATORIO.md §0)
+  </div>
+  <div class="rejilla">
+    
+    <section class="bloque" id="bloque-ahora">
+      <h2>1 · AHORA</h2>
+      <div class="grid-ahora">
+        <div><span class="etiqueta">Dirección</span><span class="valor num">-1</span></div>
+        <div><span class="etiqueta">Ventana</span><span class="valor">22h</span></div>
+        <div><span class="etiqueta">Barra actual</span><span class="valor num"><span class="atenuado">—</span></span></div>
+        <div><span class="etiqueta">Semáforo global</span><span class="valor"><span class="semaforo semaforo-bien"><span class="semaforo-icono">✓</span> BIEN</span></span></div>
+      </div>
+      <div class="subseccion"><h3>Patas abiertas</h3><div class="atenuado">sin patas abiertas</div></div>
+      <div class="subseccion"><h3>Conexiones</h3><div class="fila-conexion"><span>hedge (AMP/CQG)</span><span><span class="semaforo semaforo-bien"><span class="semaforo-icono">✓</span> conectado</span></span><span class="atenuado">feed: DESCONOCIDO</span></div><div class="fila-conexion"><span>prop (MFF/Tradovate)</span><span><span class="semaforo semaforo-bien"><span class="semaforo-icono">✓</span> conectado</span></span><span class="atenuado">feed: DESCONOCIDO</span></div></div>
+    </section>
+    <section class="bloque bloque-riesgo" id="bloque-riesgo">
+      <h2>2 · RIESGO</h2>
+      <div class="riesgo-grande">
+        <span class="etiqueta">Distancia a la degradación</span>
+        <span class="valor-enorme num">4 202.18 USD</span>
+        <span class="semaforo semaforo-bien"><span class="semaforo-icono">✓</span> BIEN</span>
+      </div>
+      <div class="grid-riesgo">
+        <div><span class="etiqueta">Caja</span><span class="valor num">-291.93 USD</span></div>
+        <div><span class="etiqueta">Retirado</span><span class="valor num">0.00 USD</span></div>
+        <div><span class="etiqueta">Tesorería viva</span><span class="valor num">-291.93 USD</span></div>
+        <div><span class="etiqueta">Muro dinámico</span><span class="valor num">4 494.11 USD</span></div>
+      </div>
+    </section><section class="bloque" id="bloque-pendientes"><h2>3 · PENDIENTES DEL HUMANO</h2>
+        <div class="atenuado">nada pendiente</div></section>
+    <section class="bloque" id="bloque-cuentas"><h2>4 · CUENTAS</h2>
+      <div class="subseccion"><h3>Eval <span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> vacía</span>
+        </h3>
+        <div class="tabla-scroll"><table class="tabla "><thead><tr><th>campo</th><th>valor</th></tr></thead><tbody><tr><td>bal</td><td><span class="num">3 000.00</span></td></tr><tr><td>H</td><td><span class="num">-209.80</span></td></tr><tr><td>s0</td><td><span class="num">77.00</span></td></tr></tbody></table></div></div>
+      <div class="subseccion"><h3>Fondeada <span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> inactiva</span></h3>
+        <div class="tabla-scroll"><table class="tabla "><thead><tr><th>campo</th><th>valor</th></tr></thead><tbody><tr><td>fase</td><td><span class="num">0</span></td></tr><tr><td>bal</td><td><span class="num">0.00</span></td></tr><tr><td>pico</td><td><span class="num">0.00</span></td></tr><tr><td>H</td><td><span class="num">0.00</span></td></tr><tr><td>s0</td><td><span class="num">0.00</span></td></tr><tr><td>dias</td><td><span class="num">0</span></td></tr><tr><td>espera</td><td><span class="num">0</span></td></tr></tbody></table></div></div>
+      <div class="subseccion"><h3>Recámara (1 dormidas, sunk_total 286.80 USD)</h3>
+        <div class="tabla-scroll"><table class="tabla "><thead><tr><th>dormida</th><th>s₀ propio</th><th>desde día</th></tr></thead><tbody><tr><td>—</td><td>—</td><td>—</td></tr></tbody></table></div></div>
+      <div class="subseccion"><h3>Pool</h3>
+        <span class="num">frescas=2</span>
+        &nbsp;<span class="num">rotas=0</span></div>
+    </section><section class="bloque" id="bloque-mercado"><h2>5 · MERCADO Y FRICCIÓN</h2>
+        <div class="no-disponible-grande">E1 no disponible — sin snapshots de mercado todavía (D-A/rama B no corriendo)</div>
+        </section><section class="bloque bloque-ancho" id="bloque-modelo"><h2>6 · MODELO vs REALIDAD</h2>
+    <div class="tabla-scroll"><table class="tabla "><thead><tr><th>evento</th><th>observado/mes</th><th>n</th><th>esperado/mes</th><th>sd</th><th>estado</th></tr></thead><tbody><tr><td>intentos de eval</td><td>21.000</td><td>1</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr><tr><td>aprobaciones</td><td>21.000</td><td>1</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr><tr><td>muertes de fondeada</td><td>0.000</td><td>0</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr><tr><td>muertes de eval</td><td>0.000</td><td>0</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr><tr><td>emergencias</td><td>0.000</td><td>0</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr><tr><td>recompras</td><td>21.000</td><td>1</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr><tr><td>resets gratis</td><td>0.000</td><td>0</td><td><span class="atenuado">—</span></td><td><span class="atenuado">—</span></td><td><span class="semaforo semaforo-aviso"><span class="semaforo-icono">△</span> todavía no concluye</span></td></tr></tbody></table></div>
+    </section><section class="bloque bloque-ancho" id="bloque-laboratorio"><h2>7 · LABORATORIO</h2>
+    <div class="tabla-scroll"><table class="tabla "><thead><tr><th>estimador</th><th>n</th><th>intervalo</th><th>estado</th><th>progreso hacia n mínimo</th></tr></thead><tbody><tr><td>E1</td><td>0</td><td>—</td><td>sin datos de papel</td><td>—</td></tr><tr><td>E2</td><td>0</td><td>—</td><td>sin datos de papel</td><td>0%</td></tr><tr><td>E3</td><td>0</td><td>—</td><td>sin datos de papel</td><td>—</td></tr><tr><td>E4</td><td>0</td><td>—</td><td>sin datos de papel</td><td>—</td></tr><tr><td>E5</td><td>0</td><td>—</td><td>diagnóstico, sin n mínimo</td><td>—</td></tr><tr><td>E6</td><td>1</td><td>±dias</td><td>acumulando</td><td>4%</td></tr></tbody></table></div>
+    </section><section class="bloque" id="bloque-incidencias"><h2>8 · INCIDENCIAS</h2>
+    <div class="atenuado">sin incidencias</div>
+    <div class="tabla-scroll"><table class="tabla "><thead><tr><th>hora</th><th>tipo</th><th>detalle</th></tr></thead><tbody><tr><td>—</td><td>—</td><td>—</td></tr></tbody></table></div>
+    </section>
+  </div>
+  <div class="pie">Generado por bot/dashboard.py — HTML autocontenido, sin servidor, sin red.
+  No decide nada por su cuenta: muestra, avisa, y ejecuta lo que el operador le pide explícitamente
+  (08_LABORATORIO.md §7).</div>
+</body>
+</html>

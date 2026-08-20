@@ -1,0 +1,319 @@
+# =============================================================================
+#  03_CONFIG.yaml  ·  LA UNICA FUENTE DE NUMEROS DEL PROYECTO
+# =============================================================================
+#  REGLA R2 (ver 04_GUARDARRAILES): un numero que no este en este fichero NO
+#  EXISTE.  Prohibido escribir literales numericos de negocio en el codigo del
+#  bot.  Si necesitas un numero que no esta aqui: PREGUNTA.  No lo estimes.
+#
+#  Cada entrada lleva:  valor · unidad · fuente · fecha · si es OPTIMIZADO o DADO
+#     DADO      = impuesto por el proveedor, el broker o el mercado.  Inmutable.
+#     SUPUESTO  = ADOPTADO, NO MEDIDO.  Es cuestionable, y el coste de que este mal esta
+#                 cuantificado en la fila de estres que cita cada entrada.  La distincion
+#                 con DADO importa: DADO no se discute; SUPUESTO si, y hay que medirlo.
+#     OPTIMIZADO= elegido por el barrido con protocolo pre-registrado.  Cambiarlo
+#                 invalida la cifra objetivo: no se toca sin re-optimizar.
+#     DERIVADO  = se calcula de otros.  NO se escribe a mano: se computa y se
+#                 comprueba contra el valor de aqui con assert.
+#
+#  version_config: v10
+#  congelado: 2026-08-19
+#  motor de referencia: modelo/pipeline3.py  (config V10 en modelo/estres_v10.py:13)
+# =============================================================================
+
+meta:
+  version: "v10"
+  fecha_congelacion: "2026-08-19"
+  # Fuente unica de las tres: modelo/estres_v10.json -> filas.base  (8 semillas x 3000 replicas,
+  # escenario cronologico).  NO usar las de modelo_v10.json:esc.crono, que son de UNA semilla.
+  cifra_objetivo_usd_mes:    1198.50   # jmes medio   (sd 3.66)
+  p5_objetivo_usd_mes:        797.20   # p5 medio
+  p_degradar_objetivo_pct:      1.096  # P(degradar) media en %  (sd 0.32)
+  semillas: 8
+  replicas: 3000
+  # AVISO: estas cifras son del MODELO, no una promesa. El bot debe REPRODUCIR el
+  # comportamiento, no la cifra: la cifra es una media sobre 8 semillas x 3000 replicas.
+  # Y el bot real rendira POR DEBAJO: hay pasos manuales que el modelo supone instantaneos
+  # (norma R-4.7) y una ejecucion que el modelo supone perfecta salvo el deslizamiento.
+
+# -----------------------------------------------------------------------------
+# 1. DIVISA Y CAPITAL
+# -----------------------------------------------------------------------------
+capital:
+  fx_eur_usd:      {valor: 1.15738,   unidad: USD/EUR, tipo: DADO,     fuente: "tipo de cambio congelado del proyecto", fecha: "2026-08-17"}
+  capital_eur:     {valor: 5300.0,    unidad: EUR,     tipo: DADO,     fuente: "capital aportado por el operador",      fecha: "2026-08-17"}
+  capital_usd:     {valor: 6134.114,  unidad: USD,     tipo: DERIVADO, formula: "capital_eur * fx_eur_usd"}
+
+# REVISION_REV5.md §3 (20-08-2026): "la tesorería es por circuito... cinco procesos independientes,
+# cada uno leyendo el mismo capital_usd, cada uno se creería dueño de todo el colchón" -- el bloqueo
+# real antes de multicuenta no es la estructura de cuentas (config.cargar(ruta)/estado.cargar(ruta)
+# YA son parametrizables por ruta, un circuito nuevo es "otro proceso con otro fichero de config y
+# otro estado.json", no reescribir el nucleo), es que tesoreria.py::muro_dinamico() leia
+# capital.capital_usd -- que suena (y, sin este cambio, ES) el capital GLOBAL, cuando en realidad es
+# el capital de ESTE circuito. Con un segundo circuito compartiendo el mismo capital.capital_usd
+# (p.ej. por un descuido al copiar el fichero de config), los dos permitirian el drawdown completo
+# y juntos podrian perder el doble de lo que el modelo cree que esta en riesgo -- la degradacion se
+# declararia tarde, o no se declararia. `circuito.capital_usd` es el campo que tesoreria.py debe leer
+# -- HOY es el mismo numero que capital.capital_usd (solo hay un circuito), pero es un campo
+# DISTINTO, con su propia identidad, para que un segundo circuito (con su PROPIO 03_CONFIG.yaml)
+# tenga necesariamente su PROPIO capital_usd aqui, nunca el ajeno por descuido.
+circuito:
+  id:          {valor: "MFF-builder50k-1", unidad: "-", tipo: DADO,
+                fuente: "identificador de ESTE circuito -- el primero, MyFundedFutures Builder 50K. Un segundo circuito (Topstep, REVISION_REV5.md §3 punto 3, no antes de F3.1 + unos meses de MFF) tendria su propio id, en su propio fichero de config.",
+                fecha: "2026-08-20"}
+  capital_usd: {valor: 6134.114, unidad: USD, tipo: DERIVADO, formula: "capital.capital_usd",
+                fuente: "mismo capital que capital.capital_usd MIENTRAS solo haya un circuito -- ver nota de arriba. tesoreria.py::muro_dinamico() lee ESTE campo, no capital.capital_usd directo.",
+                fecha: "2026-08-20"}
+
+# -----------------------------------------------------------------------------
+# 2. PROVEEDOR (MyFundedFutures · Builder 50K)   —  TODO DADO. NO SE TOCA.
+# -----------------------------------------------------------------------------
+proveedor:
+  nombre:          "MyFundedFutures · Builder 50K"
+  cuota_sub_usd:   {valor: 77.0,   unidad: USD/mes/sub, tipo: DADO, fuente: "precio con descuento; soporte confirma que NO tiene limite de uso", fecha: "2026-08-18"}
+  mll_usd:         {valor: 2000.0, unidad: USD, tipo: DADO, fuente: "Maximum Loss Limit del Builder 50K (trailing sobre el peak, congela a +LOCK)", fecha: "2026-08-17"}
+  dll_usd:         {valor: 1000.0, unidad: USD, tipo: DADO, fuente: "Daily Loss Limit del Builder 50K",                       fecha: "2026-08-17"}
+  lock_usd:        {valor: 100.0,  unidad: USD, tipo: DADO, fuente: "el trailing se congela cuando el peak alcanza MLL+LOCK", fecha: "2026-08-17"}
+  objetivo_eval_usd: {valor: 3000.0,unidad: USD, tipo: DADO, fuente: "target de la evaluacion Builder 50K",                    fecha: "2026-08-17"}
+  dias_min_eval:   {valor: 2,      unidad: dias, tipo: DADO, fuente: "minimo de dias de negociacion antes de poder aprobar",  fecha: "2026-08-17"}
+  comision_rt_usd: {valor: 1.90,   unidad: USD/contrato/round-trip, tipo: DADO, fuente: "tarifa MES round trip publicada por MFF; corregida por el operador", fecha: "2026-08-18"}
+  relevo_dias:     {valor: 0,      unidad: dias-de-espera-adicionales, tipo: DADO,
+                    fuente: "regla escrita MFF: la cuenta en reserva se activa 'a partir del siguiente dia de negociacion'. Como el bot activa en la apertura del dia siguiente, la espera ADICIONAL en el modelo es 0.",
+                    fecha: "2026-08-18",
+                    ojo: "relevo=0 NO significa 'activa el mismo dia'. Significa 'activa manana'. Ver 01_ESPECIFICACION §Relevo."}
+  reset_gratis_politica: {valor: "1 reset gratuito por suscripcion en su dia de facturacion", tipo: DADO,
+                    fuente: "politica publicada del proveedor", fecha: "2026-08-17"}
+  reset_prob_diaria: {valor: 0.0333333333, unidad: prob/dia, tipo: SUPUESTO,
+                    fuente: "MODELADO: la politica de arriba se representa como una tasa diaria 1/30 en vez de las fechas de facturacion reales, que se desconocen (ver `pendientes`). Conservador: la primera espera media real es ~15 dias.",
+                    coste_si_falla: "estres_v10.json:resets_mitad",
+                    fecha: "2026-08-17"}
+  # --- los cuatro parametros de la escalera, como entradas de PRIMER NIVEL ---
+  buf_usd:         {valor: 2100.0, unidad: USD, tipo: OPTIMIZADO,
+                    fuente: "colchon extra que el ciclo 1 debe alcanzar antes del primer cobro. Motor: pipeline3.py BUF. Eje barrido: regla_buffer_3000.", fecha: "2026-08-19"}
+  w_bruto_usd:     {valor: 2000.0, unidad: USD, tipo: OPTIMIZADO,
+                    fuente: "beneficio bruto por ciclo antes del reparto. Motor: pipeline3.py W_BRUTO. Ejes barridos: regla_retiro_1500 / regla_retiro_1000.", fecha: "2026-08-19"}
+  split:           {valor: 0.80,   unidad: fraccion, tipo: DADO,
+                    fuente: "reparto 80/20 del proveedor: el operador cobra el 80 % del bruto. Motor: pipeline3.py SP.", fecha: "2026-08-17"}
+  cons:            {valor: 0.50,   unidad: fraccion, tipo: DADO,
+                    fuente: "fraccion del objetivo del ciclo que se permite avanzar EN UN SOLO DIA. Es el `dcap` de la norma R-2.5: top = min(T - bal + cst, dcap + cst). Motor: pipeline3.py CONS.",
+                    fecha: "2026-08-17"}
+  escalera_retiro:
+    ciclo_1:       {umbral_bruto_usd: 4100.0, retira_usd: 1600.0, tope_dia_usd: 2050.0, tipo: DERIVADO,
+                    formula: "umbral = buf_usd + w_bruto_usd ; retira = split*w_bruto_usd ; tope_dia = umbral*cons"}
+    ciclos_2_a_5:  {umbral_bruto_usd: 2000.0, retira_usd: 1600.0, tope_dia_usd: 1000.0, tipo: DERIVADO,
+                    formula: "umbral = w_bruto_usd ; retira = split*w_bruto_usd ; tope_dia = umbral*cons"}
+    n_ciclos:      {valor: 5, unidad: ciclos, tipo: OPTIMIZADO, fuente: "5 cobros y la cuenta se cierra/renueva. Ejes barridos: regla_ciclos_3 / regla_ciclos_2.", fecha: "2026-08-17"}
+
+# -----------------------------------------------------------------------------
+# 3. BROKER DEL HEDGE (AMP / CQG · micros MES)   —  TODO DADO.
+# -----------------------------------------------------------------------------
+hedge_broker:
+  instrumento:     "MES (Micro E-mini S&P 500)"
+  valor_punto_usd: {valor: 5.0,   unidad: USD/punto/micro, tipo: DADO, fuente: "especificacion del contrato CME MES", fecha: "2026-08-17"}
+  tick_usd:        {valor: 1.25,  unidad: USD/tick/micro,  tipo: DADO, fuente: "0,25 pts x 5 USD", fecha: "2026-08-17"}
+  comision_rt_usd: {valor: 1.60,  unidad: USD/micro/round-trip, tipo: DADO, fuente: "tarifa NinjaTrader/AMP aportada por el operador", fecha: "2026-08-18"}
+  spr_usd:         {valor: 3.0,   unidad: USD/micro/round-trip, tipo: SUPUESTO,
+                    formula: "comision_rt_usd + tick_usd = 1,60 + 1,25 = 2,85 -> redondeado a 3,00",
+                    ojo: "LEER ENTERO ANTES DE USAR EL NUMERO. SPR es la FRICCION TOTAL por micro y round trip que entra en la identidad de cobertura (parametro SPR del motor). Los 2,85 suponen UN SOLO cruce de horquilla para el round trip ENTERO, o sea media horquilla por pata. Si cada pata cruza la suya, el valor fisico es ~4,10. Por tanto 3,00 NO es conservador: es el EXTREMO OPTIMISTA de un rango cuyo centro esta en ~4,10. Es, junto con slip_usd_micro, uno de los dos numeros que NADIE HA MEDIDO, y el que mas riesgo mueve por unidad de error.",
+                    coste_si_falla: "estres_v10.json: SPR4_pesimista 1.112,3 (-86,2 · P 2,72 %) · SPR41_un_cruce_por_pata 1.094,6 (-103,9 · P 3,00 %) · SPR5 985,6 (-212,9 · P 7,65 %) · SPR6 858,4 (-340,1 · P 14,43 %). ES LA VARIABLE QUE DECIDE LA PUERTA F3.1: el criterio pre-registrado P(degradar) <= 5 % se rompe entre 4,50 (4,69 %) y 4,75 (5,12 %). Barrido fino en cifras_citadas.json:puerta_f31.",
+                    fecha: "2026-08-18"}
+  slip_usd_micro:  {valor: 2.5,   unidad: USD/micro/muerte, tipo: SUPUESTO,
+                    fuente: "ADOPTADO, NUNCA MEDIDO. Es uno de los DOS numeros que el modelo no tiene (el otro es spr_usd); la Fase 3.1 de 05_ORDEN existe precisamente para medirlo. Bandas: VERDE 2,50 · AMBAR 6,25 · ROJO 12,50.",
+                    ojo: "LA UNIDAD ES POR MICRO, NO POR MUERTE. El deslizamiento por muerte es slip_usd_micro * m, y m vale 2 en la evaluacion y 4 en la fondeada. O sea: 25 $/muerte medidos en una EVAL son 12,50 $/micro = banda ROJA; medidos en una FONDEADA son 6,25 = banda AMBAR. Anota siempre el valor por micro y con que m operaba la cuenta.",
+                    coste_si_falla: "estres_v10.json: desliz_ambar_25 -> 1.082,5 $/mes (-116,0 · P 1,32 %) · desliz_rojo_50 -> 884,9 $/mes (-313,6 · P 1,38 %). El coste es LINEAL: slip x muertes. Apenas mueve el riesgo; el que lo mueve es spr_usd.",
+                    fecha: "2026-08-18"}
+  margen_intradia_usd: {valor: 40.0, unidad: USD/micro, tipo: DADO, fuente: "margen intradia RTH del broker", fecha: "2026-08-17"}
+
+# -----------------------------------------------------------------------------
+# 4. SIZING  —  OPTIMIZADO. Cambiar cualquiera de estos invalida la cifra.
+# -----------------------------------------------------------------------------
+sizing:
+  m_eval:          {valor: 2,      unidad: micros, tipo: OPTIMIZADO, fuente: "barrido v10 · meseta certificada", fecha: "2026-08-19"}
+  exp_eval_usd:    {valor: 1110.0, unidad: USD,    tipo: OPTIMIZADO, fuente: "barrido v10 · tope de exposicion del hedge de una eval", fecha: "2026-08-19"}
+  m_fun:           {valor: 4,      unidad: micros, tipo: OPTIMIZADO, fuente: "barrido v10", fecha: "2026-08-19"}
+  exp_fun_usd:     {valor: 1480.0, unidad: USD,    tipo: OPTIMIZADO, fuente: "barrido v10", fecha: "2026-08-19"}
+  b_eval_eur:      {valor: 40.0,   unidad: EUR,    tipo: OPTIMIZADO, fuente: "barrido v10 · buffer separado por fase", fecha: "2026-08-19"}
+  b_fun_eur:       {valor: 70.0,   unidad: EUR,    tipo: OPTIMIZADO, fuente: "barrido v10 · buffer separado por fase", fecha: "2026-08-19"}
+  b_eval_usd:      {valor: 46.295, unidad: USD,    tipo: DERIVADO, formula: "b_eval_eur * fx_eur_usd"}
+  b_fun_usd:       {valor: 81.017, unidad: USD,    tipo: DERIVADO, formula: "b_fun_eur * fx_eur_usd"}
+  fsuelo:          {valor: 1.0,    unidad: fraccion, tipo: DADO,
+                    fuente: "modo EOD: la salida de suelo se coloca al DLL COMPLETO. fsuelo escala esa distancia; 1.0 = DLL entero. Entra en ndn = DLL*fsuelo/pv (norma R-2.5). Motor: pipeline3.py, parametro fsuelo.",
+                    fecha: "2026-08-17"}
+  kcap:            {valor: 40,     unidad: contratos, tipo: DADO,
+                    fuente: "tope duro de contratos por sesion (limite operativo y de la plataforma)", fecha: "2026-08-17"}
+  # AVISO CRITICO: b (el buffer) NO es un colchon de seguridad. Es el DIAL DE SALA
+  # DIARIA: ndn = DLL/(5k) y k ~ m*Mm/(s0+b)  ==>  ndn proporcional a (s0+b)/Mm.
+  # Soltarlo los dias en que la muerte es "imposible" parece gratis y es RUINOSO:
+  #   base 1.198,5 $/mes con P(degradar) 1,10 %  ->  soltando B 1.069,2 (p5 88,5) con P 17,19 %.
+  # MEDIDO sobre la config v10 el 19-08 (8 semillas, crono, R=3000) por
+  # modelo/cifras_citadas.py -> cifras_citadas.json:b_cond.  La cifra que se publicaba
+  # antes (1.194 -> 946, P 24,53 %) era de la config v9.1: NO aplica aqui.
+  # Ver 01_ESPECIFICACION R-2.6.
+
+# -----------------------------------------------------------------------------
+# 5. ORQUESTACION DE CUENTAS  —  OPTIMIZADO.
+# -----------------------------------------------------------------------------
+orquestacion:
+  n_evals_simultaneas: {valor: 1, unidad: cuentas, tipo: OPTIMIZADO, fuente: "E=1 en la config V10", fecha: "2026-08-19",
+                    ojo: "E=1 es lo que hace IMPOSIBLE el bug de v8 (doble sesion). Ver 04_GUARDARRAILES."}
+  pool_subs:       {valor: 2,      unidad: suscripciones, tipo: OPTIMIZADO, fuente: "barrido v10", fecha: "2026-08-19"}
+  qcap:            {valor: 3,      unidad: fondeadas-dormidas, tipo: OPTIMIZADO,
+                    fuente: "barrido v10 · tope de recamara: no se fabrican mas aprobadas si ya hay qcap dormidas", fecha: "2026-08-19"}
+  qcap_tes_usd:    {valor: 10000.0,unidad: USD, tipo: OPTIMIZADO,
+                    fuente: "el tope qcap se LEVANTA cuando la tesoreria viva alcanza este nivel", fecha: "2026-08-19",
+                    ojo: "qcap y qcap_tes estan ACOPLADOS con la retencion C. Ver 01_ESPECIFICACION §Acoplamiento."}
+  retencion_c_usd: {valor: 6860.0, unidad: USD, tipo: OPTIMIZADO,
+                    fuente: "colchon retenido: a fin de mes se retira todo lo que supere C", fecha: "2026-08-19"}
+  empalme:         {valor: true,  tipo: OPTIMIZADO, fuente: "si la eval muere intradia, se empalma el MISMO dia con una fresca del pool heredando el hedge", fecha: "2026-08-19"}
+  empalmes_max_dia: {valor: 1,     unidad: empalmes/dia, tipo: DADO, fuente: "el motor solo permite un reintento por dia (intento in range(2))", fecha: "2026-08-19"}
+  empalme_friccion_factor: {valor: 0.5, tipo: SUPUESTO,
+                    fuente: "el intento empalmado hereda el hedge y por eso paga menos friccion, pero el 0,5 es una ESTIMACION ADOPTADA -- asi lo dice el propio motor (pipeline3.py:15) -- no una medida",
+                    coste_si_falla: "estres_v10.json:sin_empalme acota el extremo (empalme desactivado del todo)",
+                    fecha: "2026-08-17"}
+  empalme_barra_limite: {valor: 4, unidad: barras-antes-del-cierre, tipo: DADO, fuente: "no se empalma si la muerte ocurre en las ultimas 4 barras (ib < nb_use-4)", fecha: "2026-08-17"}
+  emergencia:      {valor: true,  tipo: OPTIMIZADO, fuente: "pool sin frescas -> cancelar una rota y recomprar (77 USD) para no dejar el slot vacio", fecha: "2026-08-19"}
+  rebuy:           {valor: true,  tipo: OPTIMIZADO, fuente: "al aprobar, la sub se cancela y se recompra una nueva para mantener el pool", fecha: "2026-08-19"}
+  dormidas_ini:    {valor: 0,     unidad: cuentas, tipo: DADO, fuente: "el circuito arranca sin fondeadas", fecha: "2026-08-19"}
+  coste_sunk_dormida_usd: {valor: 500.0, unidad: USD, tipo: DADO, fuente: "coste hundido por defecto imputado a una dormida sin linaje trazado", fecha: "2026-08-17"}
+
+# -----------------------------------------------------------------------------
+# 6. SESION Y VENTANA
+# -----------------------------------------------------------------------------
+sesion:
+  barras_por_dia:  {valor: 86,    unidad: barras, tipo: OPTIMIZADO,
+                    fuente: "nb_use=86 sobre las 88 barras que trae la serie. Barrido v10.",
+                    ojo: "LA CAMPANA SE EXPRESA EN BARRAS, NO EN RELOJ. 86 de 88 barras de 15 min = se dejan de operar los ULTIMOS 30 MINUTOS de la sesion de 22 h. NINGUN artefacto del paquete fija una hora de reloj: el mapeo barra->hora lo establece el adaptador contra el horario real del contrato, y hasta entonces es una PREGUNTA, no un dato.",
+                    fecha: "2026-08-19"}
+  barras_de_la_serie: {valor: 88, unidad: barras, tipo: DADO, fuente: "las series HG22/LG22/CG22 traen 88 barras de 15 min = 22 h", fecha: "2026-08-17"}
+  minutos_por_barra: {valor: 15,   unidad: minutos, tipo: DADO, fuente: "granularidad de la serie HG22", fecha: "2026-08-17"}
+  eod:             {valor: true,  tipo: DADO,
+                    fuente: "regla EOD: salida de suelo SIEMPRE al DLL; la muerte solo ocurre si la perdida REALIZADA o el cierre perfora el suelo vivo", fecha: "2026-08-17"}
+  cal_rth:
+    frac_dias_dato: {valor: 0.18,  unidad: fraccion, tipo: SUPUESTO,
+                    fuente: "0,18 x 21 = 3,78 dias/mes, que es el recuento de visperas de CPI/PPI/NFP/FOMC. Es una fraccion SORTEADA cada dia: el modelo no sabe QUE dia cae el dato, solo cuantos hay.",
+                    coste_si_falla: "no tiene eje propio en la tabla de estres; el mas cercano es margen_150",
+                    fecha: "2026-08-17"}
+    b0_rth:        {valor: 62,    unidad: indice-de-barra, tipo: DADO, fuente: "en dia de dato se entra tras el dato: barra 62", fecha: "2026-08-17"}
+    margen_usd:    {valor: 40.0,  unidad: USD/micro, tipo: DADO, fuente: "margen intradia usado en el muro dinamico", fecha: "2026-08-17"}
+  direccion:
+    metodo:        "sorteo 50/50 CADA DIA, para todo el sistema a la vez. REGLA CONTRA: tras un dia en el que murio alguna cuenta, la direccion del dia anterior SE MANTIENE durante contra_dias dias en vez de re-sortearse. Es decir: hay sorteo diario, y el contador CONTRA lo vetoa mientras esta vivo. Motor: pipeline3.py:203-205, DENTRO del bucle de dias."
+    contra_dias:   {valor: 1, unidad: dias, tipo: SUPUESTO,
+                    fuente: "eleccion de diseno, NO impuesta por nadie: es un eje BARRIDO (estres_v10.py define sin_contra = contra_dias 0)",
+                    coste_si_falla: "estres_v10.json:sin_contra · sin_contra_ni_empalme",
+                    fecha: "2026-08-17"}
+    ojo:           "NO hay prediccion. Todas las cuentas comparten la direccion del dia."
+
+# -----------------------------------------------------------------------------
+# 7. MURO DINAMICO Y TESORERIA
+# -----------------------------------------------------------------------------
+tesoreria:
+  pares_usd:       {valor: 2830.0, unidad: USD, tipo: DERIVADO,
+                    formula: "(m_fun*margen + exp_fun) + (m_eval*margen + exp_eval) = (4*40+1480) + (2*40+1110)"}
+  holgura_usd:     {valor: 3304.114, unidad: USD, tipo: DERIVADO, formula: "capital_usd - pares_usd"}
+  muro_dinamico:   "muro = capital_usd - (m_fun*margen + exp_fun) - (micros_eval_comprometidos_hoy*margen + exp_eval_comprometido_hoy)"
+  parada:          "se declara DEGRADACION cuando la tesoreria viva (caja - retirado) cae por debajo de -muro"
+  retiro_mensual:  "cada 21 dias de negociacion: se retira max(0, caja - retencion_c_usd - retirado_acumulado)"
+  dias_por_mes:    {valor: 21, unidad: dias-de-negociacion, tipo: SUPUESTO,
+                    fuente: "CONVENCION del modelo (asi lo dice su propia fuente original). Fija el periodo de retiro y la conversion a $/mes; no es un calendario real",
+                    fecha: "2026-08-17"}
+
+# -----------------------------------------------------------------------------
+# 8. ADAPTADOR NT8 (D-A) — timeouts provisionales, razonados no medidos
+# -----------------------------------------------------------------------------
+adaptador:
+  timeout_prop_s:  {valor: 5.0,  unidad: segundos, tipo: SUPUESTO,
+                    fuente: "N, 07_ADAPTADOR_NT8.md §5.2: PROVISIONAL, razonado no medido. Corto es barato (aborta 1 dia, EV~57 USD/dia); largo acumula exposicion real sin cubrir mientras la prop no confirma. Definitivo: p99,9 de la latencia real del ciclo completo, medida en Fase 2 -- nunca a ojo.",
+                    fecha: "2026-08-19"}
+  timeout_hedge_s: {valor: 30.0, unidad: segundos, tipo: SUPUESTO,
+                    fuente: "N_hedge, 07_ADAPTADOR_NT8.md §5.2b: PROVISIONAL, asimetria INVERTIDA frente a N -- esperar de mas no crea exposicion nueva (el hedge, si ya se ejecuto, ya tiene el riesgo con o sin timeout); abortar de menos si (un dia que el hedge habria confirmado con mas margen). Definitivo: la misma distribucion de latencia de Fase 2; el percentil exacto para N_hedge NO esta fijado (podria no ser p99,9) -- se decide con los datos delante.",
+                    fecha: "2026-08-19"}
+  # 10_SEGURIDAD.md §1 (revision del operador 20-08-2026): "el intervalo del latido del watchdog es un
+  # parametro de RIESGO, no de operacion... deberia estar en 03_CONFIG.yaml con su justificacion, junto
+  # a N y N_hedge, porque cumple exactamente la misma funcion" -- acota cuanto tiempo puede estar el
+  # hedge desnudo tras una caida del bot antes de que el watchdog (09_DESPLIEGUE.md §1) reaccione.
+  # Movido aqui desde watchdog_bot.ps1 (que antes los llevaba como parametros propios, sin fuente en
+  # config -- violacion de R2). El script sigue aceptandolos como parametro de linea de comandos (no
+  # hay forma barata de que PowerShell lea YAML sin una libreria externa), pero su valor por defecto
+  # SALE de aqui, documentado con la misma disciplina que cualquier otro numero del proyecto.
+  latido_intervalo_s: {valor: 30.0, unidad: segundos, tipo: SUPUESTO,
+                    fuente: "09_DESPLIEGUE.md §1.1: mismo orden de magnitud que dashboard.rancio_seg -- razonado, no medido. PROVISIONAL: se confirma contra el proceso real de D8 en Fase 2, igual que N/N_hedge.",
+                    fecha: "2026-08-20"}
+  latido_rancio_umbral_s: {valor: 90.0, unidad: segundos, tipo: SUPUESTO,
+                    fuente: "09_DESPLIEGUE.md §1.2: elegido como 3x adaptador.latido_intervalo_s -- mismo principio de margen que N_hedge frente a N (07_ADAPTADOR_NT8.md §5.2b), varias veces el intervalo esperado, no el intervalo exacto, para no disparar por una pausa normal de escritura a disco. NO es DERIVADO (no es una identidad exacta como una conversion de divisa -- el '3x' es un margen elegido, cuestionable y medible, no una formula cerrada) -- si latido_intervalo_s cambia, este valor se revisa a mano, no se recalcula solo.",
+                    fecha: "2026-08-20"}
+
+# -----------------------------------------------------------------------------
+# 9. DASHBOARD (D-C) — umbrales de interfaz, no de negocio
+# -----------------------------------------------------------------------------
+dashboard:
+  rancio_seg:      {valor: 30.0, unidad: segundos, tipo: SUPUESTO,
+                    fuente: "08_LABORATORIO.md §11 dejaba esto abierto explicitamente ('se elige y se justifica al construir D-C, no aqui'). Razonado al construir D-C: la cadencia media citada en 08_LABORATORIO.md §2 es ~1,6 M obs/mes, ~0,6 obs/s en horario de sesion -- 30 s sin un cambio es varias decenas de veces ese intervalo medio, mas alla de una pausa normal de mercado tranquilo pero corto para no tapar una caida real del feed o del indicador. PROVISIONAL: pendiente de confirmar contra datos reales de papel, igual que N y N_hedge.",
+                    fecha: "2026-08-20"}
+
+# -----------------------------------------------------------------------------
+# 10. ALERTAS DE CUENTA BLOQUEADA (R-2.4 / P3) -- DOS RELOJES DISTINTOS, NO UNO
+# -----------------------------------------------------------------------------
+# Corregido 20-08-2026 (revision del operador sobre la entrega D-C): "5 dias" y
+# "~7 dias" NO son la misma cifra citada dos veces de forma inconsistente -- son
+# dos eventos distintos, cada uno con su propia fuente, y el dashboard (bloque 3)
+# debe mostrar los DOS: cuanto lleva bloqueada, Y cuanto le queda antes de que el
+# PROVEEDOR (no el bot) la mate por inactividad.
+alertas:
+  bloqueada_escalada_dias: {valor: 5, unidad: dias, tipo: DADO,
+                    fuente: "07_ADAPTADOR_NT8.md P3: 'escalada de la alerta (canal mas ruidoso) a los 5 dias sin respuesta' de una cuenta bloqueada -- CUANDO EL BOT sube el aviso a un canal mas ruidoso. Reloj del BOT.",
+                    fecha: "2026-08-17"}
+  proveedor_mata_cuenta_dias: {valor: 7, unidad: dias, tipo: SUPUESTO,
+                    fuente: "01_ESPECIFICACION_E2E.md, R-2.4: 'a los ~7 dias la regla de inactividad del PROVEEDOR mata la cuenta -- sin hedge abierto, sin cosechar el buffer'. Reloj del PROVEEDOR (MyFundedFutures), no del bot -- aproximado en la propia especificacion (con virgulilla), no medido con precision: MEDIDO en la auditoria del 18-08 (config v8) que ocurre en ~0,5% de los linajes, den mediana 6.287 USD, costando 375/395/735 USD de carry perdido por replica-año (iid/crono/pesimista); 1 vez en la traza de referencia de 504 dias.",
+                    coste_si_falla: "01_ESPECIFICACION_E2E.md: carry perdido 375/395/735 USD/replica-año -- ver auditoria 18-08 config v8",
+                    fecha: "2026-08-17"}
+
+# -----------------------------------------------------------------------------
+# 11. NUMEROS QUE **NO** EXISTEN (retirados; si los ves en algun sitio, es viejo)
+# -----------------------------------------------------------------------------
+retirados:
+  - clave: "cms = 1.04"
+    motivo: "comision MFF equivocada. La real es 1,90 round trip (corregida por el operador 2026-08-18)."
+  - clave: "b0_nuevo (retardo de entrada el dia 1 de una fondeada)"
+    motivo: "conclusion INVALIDA: el dia 1 Mm=2000 y la cuenta no puede morir, asi que el modelo no puede medir el efecto. Retirada; queda como NO MEDIDO."
+  - clave: "'empate estadistico' entre configs a <40 USD"
+    motivo: "falso: el SE real es 1,5-8 USD, asi que 40 USD son 5-20 SE. Retirado."
+  - clave: "'23 % de P(degradar)' "
+    motivo: "cifra no trazable a ninguna ejecucion. Retirada."
+  - clave: "factor de comparacion multiple = 3.07"
+    motivo: "mal calculado. El correcto es 2*sqrt(2*ln(152)) = 6.34."
+  - clave: "relevo = 1 (D+2)"
+    motivo: "leia mal la regla de MFF. Contraste: con relevo=1 el replay da 2296 divergencias de estado."
+
+# -----------------------------------------------------------------------------
+# 12. NUMEROS PENDIENTES  (PREGUNTAR antes de usar — no inventar)
+# -----------------------------------------------------------------------------
+pendientes:
+  # --- LOS DOS QUE MAS PESAN: son SUPUESTOS, no datos, y el proyecto entero descansa en ellos
+  - clave: "spr_usd (friccion real del hedge)"
+    estado: "NUNCA MEDIDO. Adoptado 3,00; el centro fisico plausible es ~4,10."
+    como_se_mide: "Fase 3.1 de 05_ORDEN: 1 evaluacion real, sola, 10 sesiones."
+    si_sale_mal: "4,10 -> -103,9 $/mes y P(degradar) x2,7 · 5,00 -> -212,9 y P x7."
+  - clave: "slip_usd_micro (deslizamiento real por muerte)"
+    estado: "NUNCA MEDIDO. Adoptado 2,50 $/micro."
+    como_se_mide: "Fase 3.1, la misma tanda."
+    si_sale_mal: "6,25 -> -116,0 $/mes · 12,50 -> -313,6."
+  # --- el resto
+  - "Mapeo barra -> hora de reloj de la campana: el modelo trabaja en barras (86 de 88). Ningun artefacto fija la hora."
+  - "Retardo real de entrada el dia 1 de una fondeada nueva (b0_nuevo): NO MEDIDO."
+  - "Fechas de facturacion de cada suscripcion (el modelo usa una tasa de reset de 1/30 diaria, no fechas)."
+  - "Comportamiento del trailing MLL de MFF en el instante exacto del cierre EOD: el modelo asume el cierre de la barra."
+  - "Cuanto tarda de verdad el paso humano (recompra, confirmacion de aprobacion). Ver norma R-4.7."
+  # --- 10_SEGURIDAD.md §8 (20-08-2026): "los valores son del operador, no mios" -- las cuatro
+  # decisiones que ese documento deja explicitamente abiertas. watchdog_bot.ps1/bot/estado.py ya
+  # usan un PUNTO DE PARTIDA donde el propio documento lo propone (nunca inventado aqui) -- se anota
+  # como pendiente igual, porque un punto de partida no es una decision tomada.
+  - clave: "R y M del presupuesto de reinicios del watchdog (10_SEGURIDAD.md §5)"
+    estado: "SIN DECIDIR por el operador. watchdog_bot.ps1 usa R=3 reinicios en M=15 minutos -- el propio 10_SEGURIDAD.md lo propone como 'punto de partida... que se afine en papel', no como valor final."
+    como_se_mide: "Fase 2 (papel): frecuencia real de caidas del proceso/puente, no una suposicion."
+  - clave: "Dias de instantaneas rotatorias de estado.json (10_SEGURIDAD.md §4.D)"
+    estado: "SIN DECIDIR. El propio documento solo da 'p. ej. 30 dias' como EJEMPLO ilustrativo del marco, no como cifra propuesta -- bot/estado.py::guarda_instantanea() exige el numero como parametro obligatorio, sin valor por defecto, para que nadie lo confunda con una decision ya tomada."
+    como_se_mide: "Decision de politica de retencion del operador, no una medicion."
+  - clave: "Banda del residuo diario modelo-contra-realidad a partir de la cual se avisa (10_SEGURIDAD.md §8, REVISION_REV5.md §4.1)"
+    estado: "SIN DECIDIR. 'Hay que medirla en papel primero; fijarla a ojo la haria inutil o insufrible' (10_SEGURIDAD.md §8, literal)."
+    como_se_mide: "Fase 2 (papel): distribucion real del residuo dia a dia, antes de fijar ningun umbral de alerta."
+  - clave: "Canal de alerta para N3 (KILL) y N4 (CONGELADO) -- 10_SEGURIDAD.md §8"
+    estado: "SIN DECIDIR si es el mismo canal que el resto de alertas del bot o uno distinto (mas ruidoso, dado lo que representa cada nivel)."
