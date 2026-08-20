@@ -199,6 +199,20 @@ ante cualquier fallo, catalogado o no. Sus cinco huecos concretos (§7) y su bat
 escenarios, todos probables con `simulador_nt8/` sin NT8) se ejecutan como parte de este mismo pase
 — ver el historial de `07_ADAPTADOR_NT8.md` y `10_SEGURIDAD.md` §1 para el detalle de qué se cerró.
 
+**CERRADO 20-08-2026 (`ORDEN_DE_TRABAJO_D8.md`).** El marco en sí: `bot/seguridad.py`
+(`clasifica_posicion`/`clasifica_conocimiento`/la escalera `sube_a`/`baja_automatica`/`baja_humana`,
+nivel persistido en su propio `nivel.json`, nunca dentro de `estado.json`) — R3 en
+`verificacion_R3/prueba_seguridad_n0_n4.py` (35/35). Los cinco huecos de §7: detección de
+liquidación forzosa (`bot/deteccion_liquidacion.py`, D8.3 — R3 en proceso y end-to-end contra el
+socket real), excepción tipada + N4 para estado corrupto (`bot/estado.py::cargar` +
+`seguridad.reacciona_a_estado_invalido`), fichero de bloqueo por PID (`bot/bloqueo_proceso.py`),
+presupuesto de reinicios (ya vivía en `watchdog_bot.ps1`, lado Python listo para cablear en
+`seguridad.reacciona_a_presupuesto_reinicios_agotado`), y órdenes en reposo (D8.2, ver más abajo).
+Más el hueco nuevo del pedido de trabajo (salto de reloj en la caducidad de comandos,
+`bot/comandos.py::_avanza_reloj_max_visto`). Batería completa de la tabla de §6 (10 escenarios) en
+`verificacion_R3/prueba_bateria_10_seguridad.py` — 9/10 demostrados, 1 (#8, residuo diario fuera de
+banda) bloqueado en D8.4 + Fase 3.1, documentado como tal, no fingido.
+
 ---
 
 ## FASE 2 · Ejecución en papel
@@ -209,9 +223,32 @@ o ninguna**. **Arquitectura §7**; el día minuto a minuto en **Arquitectura §5
 marco de `10_SEGURIDAD.md` (N0-N4) para cualquier fallo, catalogado o no.
 **Puerta:** 5 días limpios en papel + kill-switch probado de verdad (no revisado: probado) — bloqueada
 por falta de cuenta `Sim101`/NT8 real, igual que D-A1. **Lo que sí se puede construir y probar sin
-papel ni NT8** (el detector en vivo contra `sesion.resolver_dia` como oráculo, las órdenes en
-reposo contra `simulador_nt8/`, el marco de `10_SEGURIDAD.md` completo) se construye ya — ver el
-historial de esta revisión.
+papel ni NT8** se está construyendo por piezas siguiendo `ORDEN_DE_TRABAJO_D8.md` (20-08-2026):
+
+- **D8.1 (detector incremental) — CERRADO.** `bot/detector_en_vivo.py::DetectorEnVivo`, verificado
+  contra `sesion.resolver_dia` como oráculo: 0 discrepancias sobre los 902 estados reales del pack de
+  504 días (`verificacion_R3/prueba_detector_en_vivo.py`) + 0 sobre 1.500 estados sintéticos de borde
+  (`verificacion_R3/prueba_detector_en_vivo_sintetico.py`) — la puerta exacta de
+  `ORDEN_DE_TRABAJO_D8.md` §1.
+- **D8.2 (órdenes en reposo) — CERRADO.** `coloca_bracket()` nuevo en el puerto
+  (`07_ADAPTADOR_NT8.md` §1 y §5.4, revisión 5), implementado en `bot/adaptador_falso.py` y cableado
+  en `simulador_nt8/`. R3 en proceso (`verificacion_R3/prueba_bracket_ordenes_reposo.py`, 19/19) y
+  end-to-end contra el socket real
+  (`integracion_proceso_real/prueba_bracket_ordenes_reposo.py`, 7/7).
+- **D8.3 (detección de liquidación forzosa) — CERRADO.** Ver la entrada de `10_SEGURIDAD.md` arriba.
+- **D8.4 (el bucle del día) — EN DISEÑO.** La pieza que ensambla todo lo demás — diseño arquitectónico
+  fundamentado (grounded contra el código real, no especulativo) en curso vía panel de ángulos +
+  síntesis, siguiendo la restricción dura de `ORDEN_DE_TRABAJO_D8.md` §0 ("un solo bucle, la fuente de
+  barras como puerto") y sin tocar `bot/sesion.py` (R6) ni cambiar el comportamiento observable de
+  `bot/orquestador.py`.
+- **D8.5 (idempotencia de órdenes) — pendiente**, junto con D8.4 (mismo patrón que
+  `bot/comandos.py::procesa_comando`, aplicado a `order_id`).
+- **Instrumentación (§3 del pedido):** lector de JSONL del laboratorio — CERRADO
+  (`bot/lector_laboratorio.py`, `verificacion_R3/prueba_lector_laboratorio.py`, 15/15; cazó y corrigió
+  un bug real preexistente en `bot/dashboard.py::_bloque_incidencias`). Residuo diario
+  modelo-contra-realidad y entradas de sizing en el diario: pendientes de D8.4 (necesitan un resultado
+  real que comparar).
+- **La Puerta Grande (§4) y todo lo que va después (§5): pendiente**, detrás de D8.4.
 
 ### D9 · Reconciliación y aserciones de runtime
 **Qué:** la reconciliación de posiciones al arrancar, las aserciones pre-orden, el cuadre de
