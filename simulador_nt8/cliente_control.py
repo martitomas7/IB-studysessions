@@ -72,6 +72,10 @@ class ClienteControl:
     def fuerza_fill(self, order_id, precio=100.0):
         return self._llamar("fuerza_fill", order_id=order_id, precio=precio)
 
+    def fuerza_posicion_externa(self, cuenta, instrumento, cantidad):
+        return self._llamar("fuerza_posicion_externa", cuenta=cuenta,
+                             instrumento=instrumento, cantidad=cantidad)
+
     def activa_rechazo_cantidad_cero(self, activo=True):
         return self._llamar("activa_rechazo_cantidad_cero", activo=activo)
 

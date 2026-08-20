@@ -100,6 +100,48 @@ def _ruta_tomado(directorio, id_):
     return os.path.join(directorio, f"{id_}.tomado")
 
 
+def _ruta_reloj_max_visto(directorio):
+    # OJO: sin extension '.json' a proposito -- `lee_pendientes()` trata TODO
+    # fichero '*.json' de `directorio` (que no sea '*.resultado.json') como un
+    # comando pendiente; si esta marca llevara '.json' terminaria ahi dentro,
+    # y `lee_pendientes()` reventaria al pedirle `comando['tipo']` a un dict
+    # que no tiene esa clave.
+    return os.path.join(directorio, '._reloj_max_visto')
+
+
+def _avanza_reloj_max_visto(directorio, ahora):
+    """Blindaje contra saltos de reloj de pared hacia atrás (10_SEGURIDAD.md
+    §7, hueco del pedido de trabajo D8: "mover el reloj de pared atrás -> un
+    comando caducado no debe resucitar"). Persiste, por `directorio`, el
+    mayor `ahora` (ISO) que este módulo ha observado jamás, y devuelve el
+    máximo entre ese valor y el `ahora` de esta llamada -- nunca hacia atrás,
+    aunque `datetime.now()` sí retroceda entre dos llamadas (paso de NTP,
+    reloj de una VM, manipulación deliberada del reloj del sistema).
+
+    Sin esto: un comando con `caduca_en` ya superado en tiempo real podría
+    parecer "todavía no caducado" si el reloj del sistema retrocede antes de
+    que `procesa_comando()` lo evalúe por primera vez -- y se EJECUTARÍA de
+    verdad, no solo se marcaría caducado. Escritura atómica (tmp+fsync+
+    replace), mismo patrón que el resto del módulo (`escribe_comando`,
+    `_escribe_resultado`)."""
+    ruta = _ruta_reloj_max_visto(directorio)
+    marca_previa = None
+    if os.path.exists(ruta):
+        with open(ruta, encoding='utf-8') as fh:
+            marca_previa = fh.read().strip() or None
+    ahora_dt = _parsea(ahora)
+    efectivo_dt = max(ahora_dt, _parsea(marca_previa)) if marca_previa else ahora_dt
+    efectivo = efectivo_dt.isoformat()
+    if efectivo != marca_previa:
+        tmp = ruta + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            fh.write(efectivo)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, ruta)
+    return efectivo
+
+
 def lee_pendientes(directorio, clase=None):
     """Lista los comandos SIN `<id>.resultado.json` todavía, opcionalmente
     filtrados por clase ('A' o 'B') -- 08_LABORATORIO.md §7.3: Clase A se
@@ -177,7 +219,8 @@ def procesa_comando(directorio, comando, ejecutor, ahora_iso_str=None):
     Devuelve el dict de resultado (el mismo que queda en
     `<id>.resultado.json`): `{id, estado, ts_resultado, ...}`, con `estado`
     ∈ {'CADUCADO', 'EJECUTADO'}."""
-    ahora = ahora_iso_str or ahora_iso()
+    os.makedirs(directorio, exist_ok=True)
+    ahora = _avanza_reloj_max_visto(directorio, ahora_iso_str or ahora_iso())
     id_ = comando['id']
 
     if _parsea(ahora) > _parsea(comando['caduca_en']):

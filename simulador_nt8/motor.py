@@ -44,7 +44,8 @@ class MotorSimulado:
     # extrae el __dict__ interno completo. Ver 07_ADAPTADOR_NT8.md §12,
     # revisión 5 (o su continuación) para el detalle).
     _FABRICAS_PERMITIDAS = frozenset({"programa_abrir", "programa_aplanar",
-                                       "desconecta", "fuerza_fill"})
+                                       "desconecta", "fuerza_fill",
+                                       "fuerza_posicion_externa"})
 
     def __init__(self):
         self._falso = AdaptadorFalso(reloj=time.monotonic)

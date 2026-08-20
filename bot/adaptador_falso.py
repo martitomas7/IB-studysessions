@@ -188,6 +188,19 @@ class AdaptadorFalso:
         a propósito 'la cancelación llegó tarde, el fill ganó la carrera'."""
         self._llena(self.ordenes[order_id], precio=precio)
 
+    def fuerza_posicion_externa(self, cuenta, instrumento, cantidad):
+        """Ayuda de pruebas (D8.3, pedido de trabajo D8 §1, 10_SEGURIDAD.md §7
+        hueco 1): fabrica 'el proveedor liquidó la posición por su cuenta' --
+        cambia `self.posiciones` DIRECTAMENTE, sin pasar por ninguna orden.
+        A diferencia de `fuerza_fill` (que resuelve una orden YA EN VUELO),
+        esto simula un movimiento de posición que no tiene ningún `order_id`
+        que lo explique -- exactamente la señal que
+        `bot/deteccion_liquidacion.py::detecta_liquidacion_forzosa()` tiene
+        que cazar: `leer_posicion()` cambia sin que ninguna orden propia
+        conocida esté en estado LLENA."""
+        self.posiciones[(cuenta, instrumento)] = cantidad
+        self.eventos.append(('POSICION_FORZADA_EXTERNA', cuenta, instrumento, cantidad))
+
     def _avanza(self, o):
         if o['estado'] in ('LLENA', 'CANCELADA', 'RECHAZADA'):
             return
