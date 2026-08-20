@@ -456,19 +456,23 @@ def activa_funded_si_toca(funded_estado, recamara_dormidas):
     return nuevo, dormidas, True
 
 
-def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
-                        resuelve_dia=None):
-    """R-5.2 a R-5.5: una sesión de la fondeada, y la escalera de cobros si toca
-    objetivo. Pipeline3.py:260-296.
+def arma_intento_funded(funded_estado):
+    """PRE-mercado de la sesión de funded -- extraído SIN CAMBIOS de lo que
+    era el arranque de `procesa_dia_funded` (pipeline3.py:260-274 + el
+    `sizing.plan` de la línea ~276), para D8.4 reestructurado
+    (RESPUESTA_D8_CONCURRENCIA.md §3 -- mismo principio que
+    `arma_intento_eval`: armar el plan ANTES de que el bucle de tiempo
+    compartido empiece a mirar barras).
 
-    `resuelve_dia`: ver el docstring de `procesa_dia_eval` -- misma inyección
-    aditiva pura (D8.4), y el mismo ligado tardío (default `None`, resuelto
-    aquí dentro) por el mismo motivo: un default `=sesion.resolver_dia` se
-    ligaría pronto (al importar el módulo) y quedaría ciego a cualquier
-    monkeypatch de `sesion.resolver_dia` hecho después -- bug real, cazado en
-    R3 (`romper_mi_orquestador.py`).
-    """
-    resuelve_dia = resuelve_dia or sesion.resolver_dia
+    A diferencia de eval, funded no tiene gate propio (`arranca`) -- la
+    decisión de si funded opera HOY vive en `orquestador.procesa_dia`
+    (`if st["funded"]["activa"]:`, ya resuelta por `activa_funded_si_toca`
+    antes de llegar aquí) -- si esta función se llama, funded arranca.
+
+    Devuelve dict(plan, m, friccion, deslizamiento, T_c, W_c, D_c, fase)
+    -- T_c/W_c/D_c/fase se devuelven porque `cierra_resolucion_funded` los
+    necesita (la escalera de retiro, R-5.4/R-5.5) y dependen de la FASE de
+    HOY, no de la de después de resolver el día."""
     cfg = config.obtener()
     m_fun = cfg.sizing.m_fun.valor()
     exp_fun = cfg.sizing.exp_fun_usd.valor()
@@ -476,9 +480,6 @@ def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
     spr = cfg.hedge_broker.spr_usd.valor()
     slip_micro = cfg.hedge_broker.slip_usd_micro.valor()
     b_fun = cfg.sizing.b_fun_usd.valor()
-    n_ciclos = cfg.proveedor.escalera_retiro.n_ciclos.valor()
-    dias_min_eval = cfg.proveedor.dias_min_eval.valor()
-    relevo_dias = cfg.proveedor.relevo_dias.valor()
     # escalera_retiro.ciclo_1 / ciclos_2_a_5: a diferencia de la mayoria de entradas
     # de 03_CONFIG.yaml, umbral_bruto_usd/retira_usd/tope_dia_usd NO llevan cada uno
     # su propio {valor:...}: son floats sueltos directamente bajo ciclo_1 (el nodo
@@ -487,9 +488,6 @@ def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
     esc = cfg['proveedor']['escalera_retiro']
 
     fu = dict(funded_estado)
-    caja_delta = 0.0
-    eventos = dict(muertes_funded=0)
-
     fase = fu["fase"]
     rama = esc['ciclo_1'] if fase == 1 else esc['ciclos_2_a_5']
     T_c = rama['umbral_bruto_usd']
@@ -498,11 +496,30 @@ def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
 
     G = max(fu["s0"], 0.0) + b_fun
     friccion = spr * m_fun
-    b0 = b0v
     plan = sizing.plan(bal=fu["bal"], pico=fu["pico"], G=G, H=fu["H"], fric=friccion,
                         m=m_fun, EXP=exp_fun, T=T_c, dcap=D_c, kcap=kcap)
-    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0, plan_resultado=plan,
-                        m=m_fun, fric=friccion, deslizamiento=slip_micro * m_fun)
+    return dict(plan=plan, m=m_fun, friccion=friccion, deslizamiento=slip_micro * m_fun,
+                T_c=T_c, W_c=W_c, D_c=D_c, fase=fase)
+
+
+def cierra_resolucion_funded(funded_estado, caja_delta, dia, plan, T_c, W_c, fase, m_fun):
+    """POST-mercado de la sesión de funded ya resuelta -- extraído SIN
+    CAMBIOS de pipeline3.py:277-296.
+
+    `n_ciclos`/`dias_min_eval`/`relevo_dias` se leen de config aquí dentro
+    (memoizado, coste nulo) en vez de threadearlos como parámetros --
+    igual que `cierra_resolucion_eval` recalcula `T_eval`.
+
+    Devuelve dict(funded_estado, caja_delta, hubo_muerte, toco_ciclo,
+    cerro_linaje, eventos, bloqueo) -- misma forma que devolvía
+    `procesa_dia_funded` completa."""
+    cfg = config.obtener()
+    n_ciclos = cfg.proveedor.escalera_retiro.n_ciclos.valor()
+    dias_min_eval = cfg.proveedor.dias_min_eval.valor()
+    relevo_dias = cfg.proveedor.relevo_dias.valor()
+
+    fu = dict(funded_estado)
+    eventos = dict(muertes_funded=0)
 
     caja_delta += dia["hedge_dolares"]
     fu["H"] += dia["hedge_dolares"]
@@ -543,3 +560,29 @@ def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
     return dict(funded_estado=fu, caja_delta=caja_delta, hubo_muerte=dia["muere"],
                 toco_ciclo=toco_ciclo, cerro_linaje=cerro_linaje, eventos=eventos,
                 bloqueo=plan["bloqueo"])
+
+
+def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
+                        resuelve_dia=None):
+    """R-5.2 a R-5.5: una sesión de la fondeada, y la escalera de cobros si toca
+    objetivo. Pipeline3.py:260-296.
+
+    D8.4 reestructurado (RESPUESTA_D8_CONCURRENCIA.md §3, 20-08-2026): esta
+    función ahora es un envoltorio DELGADO sobre `arma_intento_funded` ->
+    `resuelve_dia` -> `cierra_resolucion_funded` -- misma composición que
+    `procesa_dia_eval`, ver su docstring para el porqué completo de esta
+    extracción.
+
+    `resuelve_dia`: ver el docstring de `procesa_dia_eval` -- misma inyección
+    aditiva pura (D8.4), y el mismo ligado tardío (default `None`, resuelto
+    aquí dentro) por el mismo motivo: un default `=sesion.resolver_dia` se
+    ligaría pronto (al importar el módulo) y quedaría ciego a cualquier
+    monkeypatch de `sesion.resolver_dia` hecho después -- bug real, cazado en
+    R3 (`romper_mi_orquestador.py`).
+    """
+    resuelve_dia = resuelve_dia or sesion.resolver_dia
+    arm = arma_intento_funded(funded_estado)
+    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=arm["plan"],
+                        m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
+    return cierra_resolucion_funded(funded_estado, 0.0, dia, arm["plan"], arm["T_c"],
+                                     arm["W_c"], arm["fase"], arm["m"])
