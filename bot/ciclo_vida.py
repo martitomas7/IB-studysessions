@@ -88,10 +88,26 @@ def qcap_abierto_por_tesoreria(caja, retirado):
 # =============================================================================
 
 def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
-                      ph, pl, pc, b0v, qok, modo_auto_confirma, estado, dia_actual):
+                      ph, pl, pc, b0v, qok, modo_auto_confirma, estado, dia_actual,
+                      resuelve_dia=sesion.resolver_dia):
     """Procesa el slot de evaluación (E=1) durante un día completo, incluido el
     posible empalme -- es la versión de-vectorizada de pipeline3.py:319-387, el
     bucle `for s in range(E): ... for intento in range(2):`.
+
+    `resuelve_dia` (D8.4, ORDEN_DE_TRABAJO_D8.md §0, revisión 20-08-2026):
+    inyección aditiva pura -- por defecto es `sesion.resolver_dia` (el
+    oráculo congelado, R6), así que TODO llamador existente (empezando por
+    `orquestador.py`) obtiene el comportamiento EXACTO de siempre sin
+    cambiar una línea. `bot/bucle_del_dia.py` (D8.4, en vivo) es el único
+    llamador que pasa algo distinto -- una instancia de
+    `bot/resolucion_en_vivo.py::ResuelveDiaEnVivo`, que tiene la MISMA
+    firma posicional/keyword que `sesion.resolver_dia` pero, en vez de
+    barrer un array de barras ya conocido, coloca un bracket en reposo
+    (D8.2) y espera la resolución real del bróker. Este módulo no sabe
+    cuál de los dos es -- solo reenvía sus 8 argumentos y usa el dict de
+    vuelta, exactamente igual en los dos mundos (esto es lo que hace
+    cierto, en sentido fuerte, "un solo bucle" de §0: la MISMA llamada,
+    no una aritmética equivalente hecha dos veces).
 
     `modo_auto_confirma`: en modo replay (validación contra el motor congelado, que
     aprueba y confirma al instante) esto es True. En el bot real (Arquitectura §8:
@@ -161,8 +177,8 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
     friccion = spr * m_eval
     plan = sizing.plan(bal=ev["bal"], pico=ev["pico"], G=max(ev["s0"], 0.0) + b_eval, H=ev["H"],
                         fric=friccion, m=m_eval, EXP=exp_eval, T=T_eval, dcap=1e18, kcap=kcap)
-    dia = sesion.resolver_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0, plan_resultado=plan,
-                               m=m_eval, fric=friccion, deslizamiento=slip_micro * m_eval)
+    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0, plan_resultado=plan,
+                        m=m_eval, fric=friccion, deslizamiento=slip_micro * m_eval)
     bloqueo_hoy = plan["bloqueo"]
     caja_delta += dia["hedge_dolares"]
     ev["H"] += dia["hedge_dolares"]
@@ -205,9 +221,9 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
                     plan2 = sizing.plan(bal=0.0, pico=0.0, G=max(cuota, 0.0) + b_eval, H=0.0,
                                          fric=friccion_empalme, m=m_eval, EXP=exp_eval,
                                          T=T_eval, dcap=1e18, kcap=kcap)
-                    dia2 = sesion.resolver_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0_empalme,
-                                               plan_resultado=plan2, m=m_eval, fric=friccion_empalme,
-                                               deslizamiento=slip_micro * m_eval)
+                    dia2 = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0_empalme,
+                                        plan_resultado=plan2, m=m_eval, fric=friccion_empalme,
+                                        deslizamiento=slip_micro * m_eval)
                     caja_delta += dia2["hedge_dolares"]
                     ev["H"] += dia2["hedge_dolares"]
                     ev["bal"] += dia2["dx_puntos"] * 5.0 * plan2["k"] - dia2["comision"]
@@ -318,9 +334,13 @@ def activa_funded_si_toca(funded_estado, recamara_dormidas):
     return nuevo, dormidas, True
 
 
-def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo):
+def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
+                        resuelve_dia=sesion.resolver_dia):
     """R-5.2 a R-5.5: una sesión de la fondeada, y la escalera de cobros si toca
     objetivo. Pipeline3.py:260-296.
+
+    `resuelve_dia`: ver el docstring de `procesa_dia_eval` -- misma inyección
+    aditiva pura (D8.4).
 
     Devuelve dict con: funded_estado (nuevo), caja_delta, hubo_muerte, tocó_ciclo
     (bool), cerro_linaje (bool, si terminó los `n_ciclos`), eventos (muertes_funded).
@@ -357,8 +377,8 @@ def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo):
     b0 = b0v
     plan = sizing.plan(bal=fu["bal"], pico=fu["pico"], G=G, H=fu["H"], fric=friccion,
                         m=m_fun, EXP=exp_fun, T=T_c, dcap=D_c, kcap=kcap)
-    dia = sesion.resolver_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0, plan_resultado=plan,
-                               m=m_fun, fric=friccion, deslizamiento=slip_micro * m_fun)
+    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0, plan_resultado=plan,
+                        m=m_fun, fric=friccion, deslizamiento=slip_micro * m_fun)
 
     caja_delta += dia["hedge_dolares"]
     fu["H"] += dia["hedge_dolares"]
