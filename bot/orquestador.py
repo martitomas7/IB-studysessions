@@ -49,32 +49,39 @@ import numpy as np
 from bot import config, estado as E, calendario, ciclo_vida as CV, tesoreria as T
 
 
-def procesa_dia_replay(st, dia_pack):
-    """Procesa UN día forzado desde el replay pack. `dia_pack` es
-    `replay_v10.json['dias'][i]` (direccion, ventana, barras crudas, ya viene sin
-    reflejar -- ver `calendario.refleja_camino`).
+def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
+                 resuelve_dia_eval=None, resuelve_dia_funded=None, modo_auto_confirma=True):
+    """D8.4 (ORDEN_DE_TRABAJO_D8.md §0, revisión 20-08-2026, diseño grounded vía
+    panel de ángulos + síntesis): el pegamento COMPARTIDO de un día -- pool,
+    funded, eval, tesorería, retiro, `contra_pendiente` de mañana -- extraído
+    SIN CAMBIOS del cuerpo que antes tenía `procesa_dia_replay` (que ahora es
+    un envoltorio delgado sobre esta función, ver más abajo). No le importa de
+    dónde vinieron `direccion`/`ph`/`pl`/`pc`/`n_resets_hoy` -- un pack de
+    replay forzado, o un sorteo real en vivo (`bot/bucle_del_dia.py`, D8.4) --
+    ni si `resuelve_dia_eval`/`resuelve_dia_funded` son `sesion.resolver_dia`
+    (replay, el default si se deja `None`) o un `ResuelveDiaEnVivo`
+    (`bot/resolucion_en_vivo.py`) que coloca un bracket en reposo (D8.2) y
+    espera la resolución real del bróker.
 
-    Modo replay: `modo_auto_confirma=True` en `ciclo_vida` (el motor congelado
-    aprueba y confirma al instante, R-4.7 -- ver el docstring de
-    `ciclo_vida.procesa_dia_eval`). Los resets del pool y la ventana/dirección
-    del día son los que trae el pack, no un sorteo propio (Arquitectura §9).
+    Esta extracción es lo que hace CIERTO, en sentido fuerte, "el bucle del
+    día tiene que ser UNO SOLO" (§0): `bucle_del_dia` llama a ESTA función
+    para cada día, tanto contra un pack de replay como en producción en vivo
+    -- es literalmente la misma llamada Python, mismas ramas, en los dos
+    mundos, nunca una aritmética "equivalente" reimplementada aparte.
 
-    Devuelve (st_nuevo, fin_de_dia_dict, diario_linea_dict).
+    `resuelve_dia_eval`/`resuelve_dia_funded=None` -> usan el default de
+    `ciclo_vida.py` (`sesion.resolver_dia`) -- así que `procesa_dia_replay`
+    (su único llamador hasta hoy) no cambia de comportamiento ni un bit.
+
+    Devuelve (st_nuevo, fin_de_dia_dict, diario_linea_dict) -- misma forma
+    que siempre.
     """
-    st = json.loads(json.dumps(st))  # copia profunda barata, sin dependencias extra
     cfg = config.obtener()
-
-    direccion = dia_pack["direccion"]
-    ventana_txt = dia_pack["ventana"]
-    b0v = cfg.sesion.cal_rth.b0_rth.valor() if ventana_txt == "RTH" else 0
-    ph_crudo = dia_pack["barras"]["ph"]
-    pl_crudo = dia_pack["barras"]["pl"]
-    pc_crudo = dia_pack["barras"]["pc"]
-    ph, pl, pc = calendario.refleja_camino(ph_crudo, pl_crudo, pc_crudo, direccion)
+    kwargs_eval = {} if resuelve_dia_eval is None else dict(resuelve_dia=resuelve_dia_eval)
+    kwargs_funded = {} if resuelve_dia_funded is None else dict(resuelve_dia=resuelve_dia_funded)
 
     # --- pool: coste fijo diario + resets forzados del día ---------------------
     st["caja"] -= CV.coste_diario_pool()
-    n_resets_hoy = dia_pack["eventos"]["resets"]
     st["pool"]["frescas"], st["pool"]["rotas"] = CV.aplica_resets(
         st["pool"]["frescas"], st["pool"]["rotas"], n_resets_hoy)
 
@@ -89,7 +96,7 @@ def procesa_dia_replay(st, dia_pack):
     st["recamara"]["sunk_total"] = sum(d["s0"] for d in st["recamara"]["dormidas"])
     if st["funded"]["activa"]:
         r = CV.procesa_dia_funded(st["funded"], direccion, ph, pl, pc, b0v,
-                                   es_dia_nuevo=activada_hoy)
+                                   es_dia_nuevo=activada_hoy, **kwargs_funded)
         st["funded"] = r["funded_estado"]
         st["caja"] += r["caja_delta"]
         hubo_muerte_hoy = hubo_muerte_hoy or r["hubo_muerte"]
@@ -104,8 +111,9 @@ def procesa_dia_replay(st, dia_pack):
     qok = CV.qcap_abierto(st["recamara"]["n"]) or CV.qcap_abierto_por_tesoreria(
         st["caja"], st["retirado"])
     r_eval = CV.procesa_dia_eval(st["eval"], st["pool"], st["recamara"]["dormidas"],
-                                  direccion, ph, pl, pc, b0v, qok, modo_auto_confirma=True,
-                                  estado=st, dia_actual=st["dia_negociacion"] + 1)
+                                  direccion, ph, pl, pc, b0v, qok,
+                                  modo_auto_confirma=modo_auto_confirma,
+                                  estado=st, dia_actual=st["dia_negociacion"] + 1, **kwargs_eval)
     st["eval"] = r_eval["eval_estado"]
     st["pool"] = r_eval["pool_estado"]
     st["caja"] += r_eval["caja_delta"]
@@ -173,6 +181,41 @@ def procesa_dia_replay(st, dia_pack):
     diario = dict(dia=st["dia_negociacion"], direccion=direccion, ventana=ventana_txt,
                   eventos=ev_dia, fin_de_dia=fin_de_dia)
     return st, fin_de_dia, diario
+
+
+def procesa_dia_replay(st, dia_pack):
+    """Procesa UN día forzado desde el replay pack. `dia_pack` es
+    `replay_v10.json['dias'][i]` (direccion, ventana, barras crudas, ya viene sin
+    reflejar -- ver `calendario.refleja_camino`).
+
+    Modo replay: `modo_auto_confirma=True` (el motor congelado aprueba y confirma
+    al instante, R-4.7 -- ver el docstring de `ciclo_vida.procesa_dia_eval`). Los
+    resets del pool y la ventana/dirección del día son los que trae el pack, no
+    un sorteo propio (Arquitectura §9).
+
+    D8.4 (ORDEN_DE_TRABAJO_D8.md §0, revisión 20-08-2026): esta función es ahora
+    un envoltorio DELGADO -- deriva `direccion`/`ventana_txt`/`b0v`/`ph,pl,pc`
+    (reflejados)/`n_resets_hoy` de `dia_pack` (exactamente como hacía antes de la
+    extracción) y delega el resto en `procesa_dia()`, compartida con
+    `bot/bucle_del_dia.py` (en vivo). Firma y comportamiento SIN NINGÚN CAMBIO
+    para su único llamador, `corre_replay()` -- verificado bit a bit
+    (`verificacion_R3/prueba_orquestador_extraccion.py`).
+
+    Devuelve (st_nuevo, fin_de_dia_dict, diario_linea_dict).
+    """
+    st = json.loads(json.dumps(st))  # copia profunda barata, sin dependencias extra
+    cfg = config.obtener()
+
+    direccion = dia_pack["direccion"]
+    ventana_txt = dia_pack["ventana"]
+    b0v = cfg.sesion.cal_rth.b0_rth.valor() if ventana_txt == "RTH" else 0
+    ph_crudo = dia_pack["barras"]["ph"]
+    pl_crudo = dia_pack["barras"]["pl"]
+    pc_crudo = dia_pack["barras"]["pc"]
+    ph, pl, pc = calendario.refleja_camino(ph_crudo, pl_crudo, pc_crudo, direccion)
+    n_resets_hoy = dia_pack["eventos"]["resets"]
+
+    return procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy)
 
 
 def _recupera_precision_completa(pack, ruta_modelo=None):

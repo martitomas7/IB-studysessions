@@ -71,6 +71,28 @@ ok("procesa_dia_funded sin kwarg y con espía (delegando en el real) dan el mism
    r_f1 == r_f2, (r_f1, r_f2))
 ok("el espía de funded se llamó de verdad", len(llamadas_f) == 1, llamadas_f)
 
+print("\n=== 4. ligado TARDÍO del default (bug real cazado en R3 vía romper_mi_orquestador.py: "
+      "un default =sesion.resolver_dia se ligaría PRONTO, al importar el módulo, y quedaría "
+      "ciego a un monkeypatch posterior de sesion.resolver_dia) ===")
+_original = sesion.resolver_dia
+llamadas_parcheado = []
+def resolver_dia_falso(ph, pl, pc, barra_inicio, plan_resultado, m, fric, deslizamiento=0.0,
+                        redondea=False):
+    llamadas_parcheado.append(True)
+    return dict(dx_puntos=999.0, hedge_dolares=0.0, comision=0.0, muere=False,
+                pausa=False, objetivo=False, barra_evento=0)
+try:
+    sesion.resolver_dia = resolver_dia_falso   # monkeypatch DESPUÉS de que ciclo_vida.py ya se importó
+    r_parcheado = CV.procesa_dia_eval(dict(ev0), dict(pool0), [], direccion=1, ph=ph, pl=pl, pc=pc,
+                                       b0v=0, qok=True, modo_auto_confirma=True,
+                                       estado=estado_min, dia_actual=1)
+finally:
+    sesion.resolver_dia = _original
+ok("SIN pasar resuelve_dia explícito, el monkeypatch de sesion.resolver_dia SÍ se refleja "
+   "(dx_puntos=999.0 del falso, no el resultado real) -- ligado tardío confirmado",
+   llamadas_parcheado == [True] and r_parcheado['eval_estado']['bal'] != r_a['eval_estado']['bal'],
+   r_parcheado)
+
 print("\n" + "=" * 70)
 n_ok = sum(1 for _, c in resultados if c)
 print(f"{n_ok}/{len(resultados)} comprobaciones OK")

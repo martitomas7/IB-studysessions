@@ -89,7 +89,7 @@ def qcap_abierto_por_tesoreria(caja, retirado):
 
 def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
                       ph, pl, pc, b0v, qok, modo_auto_confirma, estado, dia_actual,
-                      resuelve_dia=sesion.resolver_dia):
+                      resuelve_dia=None):
     """Procesa el slot de evaluación (E=1) durante un día completo, incluido el
     posible empalme -- es la versión de-vectorizada de pipeline3.py:319-387, el
     bucle `for s in range(E): ... for intento in range(2):`.
@@ -130,6 +130,18 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
     contrastar con el replay pack), bloqueo (bool, si el intento único del día
     estuvo bloqueado).
     """
+    # OJO (bug real cazado en R3 al re-verificar romper_mi_orquestador.py tras
+    # D8.4 paso 1): `resuelve_dia=sesion.resolver_dia` como VALOR POR DEFECTO
+    # del parámetro se evaluaría UNA SOLA VEZ, al importar el módulo -- ligado
+    # pronto (early binding). `romper_mi_orquestador.py` monkeypatchea
+    # `sesion_mod.resolver_dia` DESPUÉS de que `ciclo_vida.py` ya se importó;
+    # con un default ligado pronto, ese monkeypatch queda ciego para toda
+    # llamada que confíe en el default -- exactamente 2 de las 5 roturas de la
+    # puerta (look-ahead R-3.2 y cuenta bloqueada R-2.4/4.3) dejaron de
+    # detectarse. Corregido: default `None`, resuelto aquí dentro con ligado
+    # tardío -- así SIEMPRE lee `sesion.resolver_dia` en el instante de la
+    # llamada, monkeypatch incluido.
+    resuelve_dia = resuelve_dia or sesion.resolver_dia
     cfg = config.obtener()
     m_eval = cfg.sizing.m_eval.valor()
     exp_eval = cfg.sizing.exp_eval_usd.valor()
@@ -335,16 +347,18 @@ def activa_funded_si_toca(funded_estado, recamara_dormidas):
 
 
 def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
-                        resuelve_dia=sesion.resolver_dia):
+                        resuelve_dia=None):
     """R-5.2 a R-5.5: una sesión de la fondeada, y la escalera de cobros si toca
     objetivo. Pipeline3.py:260-296.
 
     `resuelve_dia`: ver el docstring de `procesa_dia_eval` -- misma inyección
-    aditiva pura (D8.4).
-
-    Devuelve dict con: funded_estado (nuevo), caja_delta, hubo_muerte, tocó_ciclo
-    (bool), cerro_linaje (bool, si terminó los `n_ciclos`), eventos (muertes_funded).
+    aditiva pura (D8.4), y el mismo ligado tardío (default `None`, resuelto
+    aquí dentro) por el mismo motivo: un default `=sesion.resolver_dia` se
+    ligaría pronto (al importar el módulo) y quedaría ciego a cualquier
+    monkeypatch de `sesion.resolver_dia` hecho después -- bug real, cazado en
+    R3 (`romper_mi_orquestador.py`).
     """
+    resuelve_dia = resuelve_dia or sesion.resolver_dia
     cfg = config.obtener()
     m_fun = cfg.sizing.m_fun.valor()
     exp_fun = cfg.sizing.exp_fun_usd.valor()
