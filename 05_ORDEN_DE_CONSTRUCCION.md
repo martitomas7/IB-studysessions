@@ -266,7 +266,7 @@ de Arquitectura §4.
 
 | escalón | qué | criterio para pasar al siguiente |
 |---|---|---|
-| **F3.1** | 1 evaluación real, sola, 10 sesiones | mide los **números que el modelo no tiene** (2 con criterio de paso + 1 nuevo sin banda todavía). Detalle abajo |
+| **F3.1** | 1 evaluación real, sola, 10 sesiones | mide los **dos números que el modelo no tiene** (`spr_usd`, con dos formas de medirse -- por round-trip o por fill, ver detalle abajo -- y `slip_usd_micro`). Criterio abajo |
 | **F3.2** | funded + evaluación | verificar la regla de dirección única contra posiciones **reales** del bróker |
 | **F3.3** | pool completo, 1 mes | cuadre mensual dentro de ±10 % del modelo |
 
@@ -294,32 +294,42 @@ número **por micro**, y deja escrito con qué `m` operaba la cuenta.
 Lo mismo con la fricción: `spr_usd` es **por micro y round trip**, no por sesión ni por
 cuenta.
 
-#### El tercer eje: desviación de fill rutinario (Pasada 2, `ORDEN_PASADA2_CIERRE.md` §3.3)
+#### La desviación de fill rutinario NO es un tercer número -- es `spr_usd` en otra unidad
 
-F3.1 medía hasta ahora dos números (`spr_usd`, `slip_usd_micro`) porque eran los dos que
-entraban en el criterio `P(degradar)` de abajo. La Pasada 2 de LA PUERTA GRANDE
-(`verificacion_R3/PASADA_2_RUIDO.md`) midió que hay un **tercer eje** que el modelo tampoco
-tiene, y que además es el **más caro por unidad**: la desviación de fill en los intentos
-**normales** (entrada, objetivo, campana) -- `slip_usd_micro` solo cubre la salida por
-muerte; este eje no tenía ni parámetro.
+La Pasada 2 de LA PUERTA GRANDE (`verificacion_R3/PASADA_2_RUIDO.md`) midió, en los
+intentos **normales** (entrada, objetivo, campana -- distintos de la salida por muerte,
+que ya cubre `slip_usd_micro`), una desviación de fill que en un primer análisis se
+llamó "un tercer número que el modelo no tiene". **Eso era un error, corregido en
+`REVISION_D8_S5_PASADA2.md` §2:** `spr_usd` ya carga "cruzar la horquilla" sobre **todo**
+micro-round-trip, muerte o no (`bot/detector_en_vivo.py`, `fric` se resta siempre, no solo
+si `muere`). El eje de fills normales de la Pasada 2 mide **la misma desviación física**,
+solo que expresada por fill en vez de por round-trip fijo, y por el mismo canal aislado.
 
-**F3.1 tiene que medir los dos ejes por separado, en la MISMA evaluación real:**
+Censo directo del pack de 504 días (verificación independiente, no solo la cifra de la
+Pasada 2): de 2.742 micro-sesiones totales, 2.068 son sin muerte. De ahí sale el factor de
+conversión, **medido, nunca inventado**:
 
-| eje | qué mide | alimenta |
-|---|---|---|
-| Salida apresurada (stop a mercado) | la desviación de siempre -- la salida de muerte | `slip_usd_micro`, bandas ya existentes (arriba) |
-| Fill rutinario (entrada, campana) | cuánto se desvía un fill normal del precio de referencia | `hedge_broker.desviacion_fill_normal_usd_tick` (`03_CONFIG.yaml`) -- SIN bandas todavía |
+> **1 tick de desviación de fill rutinario ≡ Δ`spr_usd` de 0,9427 $/micro.**
 
-Igual que arriba: anota siempre el valor **por micro** y con qué `m` operaba la cuenta -- la
-misma trampa del factor 2/4 aplica a los dos ejes, no solo al de muerte.
+**Consecuencia práctica: F3.1 no mide dos ejes con dos bandas -- mide UNA desviación real
+de fill (en ticks), y la convierte a $/micro round-trip con el factor de arriba para entrar
+en la tabla de la puerta F3.1 que ya existe (abajo).** No hacen falta bandas nuevas --
+`spr_usd` ya tiene las suyas, y esta es la misma variable.
 
-**No se inventan bandas verde/ámbar/rojo para el eje nuevo.** Hasta que F3.1 dé el primer
-dato real, ese eje no tiene banda: tiene la curva medida por la Pasada 2 (`coste_si_falla`
-de `desviacion_fill_normal_usd_tick`, `03_CONFIG.yaml`). El laboratorio (`08_LABORATORIO.md`
-§10) ya recoge cotizaciones y spreads, así que el dato va a estar -- lo que falta es pedirlo
-explícitamente durante F3.1 y registrarlo separado del de muerte, no inventar un instrumento
-nuevo. El criterio de paso de la puerta (abajo) sigue siendo solo sobre fricción y
-deslizamiento de muerte -- este tercer eje se registra, no cambia el gate todavía.
+**Regla de no doble cobro** (mismo principio que `slip_usd_micro` en la Pasada 2, §4a de
+`ANALISIS_PUERTA_GRANDE.md`): `spr_usd` y `hedge_broker.desviacion_fill_normal_usd_tick`
+(`03_CONFIG.yaml`) nunca suben los dos a la vez. Mientras `spr_usd` cargue la fricción
+(como hoy), el eje de ticks se queda en `valor: 0.0`.
+
+**Nota abierta, sin resolver todavía:** un primer intento de ubicar la línea exacta donde
+el gate falla, expresada en ticks del eje nuevo, dio dos cifras que no cuadran entre sí
+(1,59 ticks / spr≈4,51 en un borrador, ~1,78 ticks / spr≈4,68 al interpolar linealmente los
+dos puntos de `modelo/cifras_citadas.json:puerta_f31` que rodean el 5 %). La rejilla de esa
+tabla es gruesa (3,00 / 4,00 / 4,10 / 4,25 / 4,50 / 4,75 / 5,00) y con ruido de Monte Carlo
+visible entre puntos contiguos -- interpolar linealmente ahí no da una cifra fiable en
+ningún sentido. **Hasta que F3.1 mida el dato real, la línea de fallo se queda como ya
+estaba publicada arriba: "se rompe entre 4,50 y 4,75"**, sin una cifra de ticks más precisa
+que esa horquilla.
 
 #### El criterio de paso: el protocolo pre-registrado, no un número inventado
 

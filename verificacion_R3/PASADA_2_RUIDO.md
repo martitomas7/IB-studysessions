@@ -15,7 +15,7 @@ Pendiente medida: **-46.000000 $** por cada 1 $/micro de deslizamiento extra (pr
 
 ## Barrido de fills normales -- entrada/objetivo/campana (muerte fija en el ancla)
 
-Lo que hoy NO está modelado en `bot/` -- sin banda verde/ámbar/rojo hasta que F3.1 dé el primer dato real (`05_ORDEN_DE_CONSTRUCCION.md`); se reporta la curva, registrada en `03_CONFIG.yaml → hedge_broker.desviacion_fill_normal_usd_tick` como eje de barrido, no como valor de operación.
+NO es un eje independiente de `spr_usd` -- corrección de `REVISION_D8_S5_PASADA2.md` §2: `spr_usd` ya carga la misma desviación de horquilla sobre TODO micro-round-trip, muerte o no. Se registra en `03_CONFIG.yaml → hedge_broker.desviacion_fill_normal_usd_tick` como eje de barrido (`valor: 0.0`, mientras `spr_usd` siga cargando la fricción), nunca los dos a la vez.
 
 | ticks | caja final |
 |---|---|
@@ -33,7 +33,7 @@ Pendiente medida: **-145.0000 $/tick**.
 | Salida por muerte | -57.50 | 46 micro-muertes |
 | Fills normales | -145.00 | micro-días sin muerte |
 
-El deslizamiento rutinario cuesta **2.52×** más por tick que el de muerte -- pasa todos los días, la muerte no. El gate F3.1 mide hoy solo el eje de muerte (`slip_usd_micro`); el eje rutinario no tiene banda todavía.
+El deslizamiento rutinario cuesta **2.52×** más por tick que el de muerte -- pasa todos los días, la muerte no. Pero es `spr_usd` en otra unidad, no un eje nuevo (REVISION_D8_S5_PASADA2.md §2.1): censo de esta corrida, 162 micro-sesiones totales, 116 sin muerte -> **1 tick de este eje equivale a 0.8951 $/micro de `spr_usd`**. El gate F3.1 ya lo cubre a través de `spr_usd` (05_ORDEN_DE_CONSTRUCCION.md), sin bandas nuevas que inventar.
 
 ## Falsación de aditividad (ORDEN_PASADA2_CIERRE.md §3.1)
 

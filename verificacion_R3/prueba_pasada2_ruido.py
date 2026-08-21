@@ -41,7 +41,13 @@ Tres partes:
 N_DIAS es un argumento de línea de comandos -- por defecto un subconjunto
 pequeño para iterar rápido; `--full` corre los 504 días completos (la
 única corrida que reproduce el pendiente EXACTO de 676 que predice el
-operador)."""
+operador).
+
+CORRECCIÓN (REVISION_D8_S5_PASADA2.md §2, 21-08-2026): el eje de fills
+normales (Parte 1) NO es un tercer número independiente -- es `spr_usd`
+(`03_CONFIG.yaml`) expresado por fill en vez de por round-trip fijo,
+mismo canal aislado. El factor de conversión se deriva aquí mismo, nunca
+a mano (`censo_micro_sesiones()`, `apoyo_pasada2.py`)."""
 import json
 import os
 import shutil
@@ -53,7 +59,7 @@ sys.path.insert(0, ING)
 sys.path.insert(0, AQUI)
 
 from apoyo_puerta_grande import AdaptadorReplaySobrePack, FuenteDeReplayEnVivo
-from apoyo_pasada2 import con_ruido_ejecucion
+from apoyo_pasada2 import con_ruido_ejecucion, censo_micro_sesiones
 
 from bot import bucle_del_dia as BDD
 from bot import config, estado as E, orquestador as O
@@ -90,7 +96,7 @@ def ok(nombre, cond, detalle=""):
     print(f"  {'OK ' if cond else 'FALLO'} · {nombre}" + (f"  ({detalle})" if detalle else ""))
 
 
-def corre(sufijo, gestor=None):
+def corre(sufijo, gestor=None, gestor2=None):
     dir_run = os.path.join(DIR_TMP, sufijo)
     shutil.rmtree(dir_run, ignore_errors=True)
     os.makedirs(dir_run)
@@ -112,10 +118,12 @@ def corre(sufijo, gestor=None):
             dir_instantaneas=os.path.join(dir_run, "instantaneas"), dias_retenidos=5,
             ruta_diario=os.path.join(dir_run, "diario.jsonl"), dormir=lambda s: None)
 
-    if gestor is not None:
-        with gestor:
-            st_final = _corre()
-    else:
+    from contextlib import ExitStack
+    with ExitStack() as pila:
+        if gestor is not None:
+            pila.enter_context(gestor)
+        if gestor2 is not None:
+            pila.enter_context(gestor2)
         st_final = _corre()
 
     diario_leido = [json.loads(l) for l in open(os.path.join(dir_run, "diario.jsonl"))]
@@ -139,7 +147,8 @@ os.makedirs(DIR_TMP)
 print(f"=== PASADA 2 -- {n_dias} días, ancla = {SLIP_USD_MICRO}/{TICK_USD} = {ANCLA_TICKS} ticks ===\n")
 
 print("--- Parte 0: ancla -- con_ruido_ejecucion(0, ancla) debe == baseline SIN gestor ---")
-st_base, diario_base = corre('base')
+censo = dict(micros_totales=0, micros_muerte=0, micros_sin_muerte=0)
+st_base, diario_base = corre('base', gestor2=censo_micro_sesiones(censo))
 st_ancla, diario_ancla = corre(
     'ancla', con_ruido_ejecucion(ruido_normal_ticks=0.0, ruido_muerte_ticks=ANCLA_TICKS))
 ok("ancla: caja IDÉNTICA bit a bit vs baseline (reproduce slip_usd_micro por construcción)",
@@ -147,11 +156,24 @@ ok("ancla: caja IDÉNTICA bit a bit vs baseline (reproduce slip_usd_micro por co
 ok("ancla: diario COMPLETO idéntico bit a bit vs baseline",
    diario_base == diario_ancla)
 
+# REVISION_D8_S5_PASADA2.md §2.1 -- el eje de fills normales NO es un tercer
+# número: es spr_usd en otra unidad. Factor de conversión medido, nunca a
+# mano -- censo directo de esta misma corrida (censo_micro_sesiones, arriba).
+CONVERSION_SPR_POR_TICK = TICK_USD * (censo['micros_sin_muerte'] / censo['micros_totales']) \
+    if censo['micros_totales'] else 0.0
+print(f"\n  censo de micro-sesiones: {censo['micros_totales']} totales, "
+      f"{censo['micros_sin_muerte']} sin muerte -> 1 tick del eje normal equivale a "
+      f"{CONVERSION_SPR_POR_TICK:.4f} $/micro de spr_usd")
+
 me_total, mf_total = totales_muertes(diario_base)
 pendiente_predicha = -(me_total * M_EVAL + mf_total * M_FUN)
 print(f"\n  censo de muertes en esta corrida: {me_total} eval (m={M_EVAL}) + {mf_total} funded (m={M_FUN}) "
       f"= {me_total*M_EVAL + mf_total*M_FUN} micro-muertes -> pendiente predicha = {pendiente_predicha} "
       f"$ por 1 $/micro")
+ok("censo: micros_muerte del censo directo == muertes_eval·m_eval + muertes_funded·m_fun del diario "
+   "(dos formas independientes de contar, deben coincidir)",
+   censo['micros_muerte'] == me_total * M_EVAL + mf_total * M_FUN,
+   (censo['micros_muerte'], me_total * M_EVAL + mf_total * M_FUN))
 
 print("\n--- Parte 1: barrido de fills normales (0/0,25/0,5/1 tick), muerte fija en el ancla ---")
 puntos_normal = (0.0, 0.25, 0.5, 1.0)
@@ -263,10 +285,11 @@ with open(RUTA_MD, 'w') as fh:
     fh.write(f"\nPendiente medida: **{pendientes[0]:.6f} $** por cada 1 $/micro de deslizamiento extra "
              f"(predicha: {pendiente_predicha}).\n\n")
     fh.write("## Barrido de fills normales -- entrada/objetivo/campana (muerte fija en el ancla)\n\n")
-    fh.write("Lo que hoy NO está modelado en `bot/` -- sin banda verde/ámbar/rojo hasta que F3.1 dé el "
-             "primer dato real (`05_ORDEN_DE_CONSTRUCCION.md`); se reporta la curva, registrada en "
-             "`03_CONFIG.yaml → hedge_broker.desviacion_fill_normal_usd_tick` como eje de barrido, no "
-             "como valor de operación.\n\n")
+    fh.write("NO es un eje independiente de `spr_usd` -- corrección de `REVISION_D8_S5_PASADA2.md` "
+             "§2: `spr_usd` ya carga la misma desviación de horquilla sobre TODO micro-round-trip, "
+             "muerte o no. Se registra en `03_CONFIG.yaml → hedge_broker.desviacion_fill_normal_usd_tick` "
+             "como eje de barrido (`valor: 0.0`, mientras `spr_usd` siga cargando la fricción), nunca "
+             "los dos a la vez.\n\n")
     fh.write("| ticks | caja final |\n|---|---|\n")
     for rn, caja in filas_normal:
         fh.write(f"| {rn} | {caja:.6f} |\n")
@@ -278,8 +301,11 @@ with open(RUTA_MD, 'w') as fh:
     fh.write(f"| Fills normales | {COSTE_NORMAL_USD_TICK:.2f} | micro-días sin muerte |\n\n")
     razon = COSTE_NORMAL_USD_TICK / COSTE_MUERTE_USD_TICK
     fh.write(f"El deslizamiento rutinario cuesta **{razon:.2f}×** más por tick que el de muerte -- "
-             f"pasa todos los días, la muerte no. El gate F3.1 mide hoy solo el eje de muerte "
-             f"(`slip_usd_micro`); el eje rutinario no tiene banda todavía.\n\n")
+             f"pasa todos los días, la muerte no. Pero es `spr_usd` en otra unidad, no un eje nuevo "
+             f"(REVISION_D8_S5_PASADA2.md §2.1): censo de esta corrida, {censo['micros_totales']} "
+             f"micro-sesiones totales, {censo['micros_sin_muerte']} sin muerte -> **1 tick de este eje "
+             f"equivale a {CONVERSION_SPR_POR_TICK:.4f} $/micro de `spr_usd`**. El gate F3.1 ya lo cubre "
+             f"a través de `spr_usd` (05_ORDEN_DE_CONSTRUCCION.md), sin bandas nuevas que inventar.\n\n")
     fh.write("## Falsación de aditividad (ORDEN_PASADA2_CIERRE.md §3.1)\n\n")
     fh.write("Los dos ejes actúan sobre días disjuntos (con muerte / sin muerte) y ninguno toca "
              "`eval.bal`/`funded.bal` -- deben ser exactamente aditivos:\n\n")

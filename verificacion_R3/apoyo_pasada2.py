@@ -158,3 +158,45 @@ def sin_deslizamiento_analitico():
     solo necesiten "apagar el deslizamiento analítico", sin barrer nada."""
     with con_ruido_ejecucion(ruido_normal_ticks=0.0, ruido_muerte_ticks=0.0):
         yield
+
+
+def _cuenta(fn, m_fijo, contador):
+    def _envoltorio(*a, **kw):
+        r = fn(*a, **kw)
+        ix_dia = _indice_de(fn, 'dia')
+        dia = a[ix_dia] if ix_dia < len(a) else kw.get('dia')
+        contador['micros_totales'] += m_fijo
+        if dia['muere']:
+            contador['micros_muerte'] += m_fijo
+        else:
+            contador['micros_sin_muerte'] += m_fijo
+        return r
+    return _envoltorio
+
+
+@contextmanager
+def censo_micro_sesiones(contador):
+    """Cuenta, directo de la corrida (nunca a mano, R2), cuántas
+    micro-sesiones (cada resolución de `cierra_resolucion_eval`/
+    `cierra_resolucion_funded`, contada por su propio `m`, no por
+    llamada) hay en total y cuántas son sin muerte -- la base del factor
+    de conversión `spr_usd` <-> `desviacion_fill_normal_usd_tick`
+    (REVISION_D8_S5_PASADA2.md §2.1: 1 tick del eje nuevo equivale a
+    `micros_sin_muerte / micros_totales` veces `tick_usd` $/micro de
+    `spr_usd`). `contador` es un dict con claves `micros_totales`,
+    `micros_muerte`, `micros_sin_muerte` -- inicializado a 0 por el
+    llamador, relleno aquí. Puramente observador -- nunca cambia
+    `caja_delta` ni ningún otro resultado (a diferencia de
+    `con_ruido_ejecucion()`, con el que se puede combinar sin
+    interferir: cada uno envuelve una capa distinta)."""
+    orig_eval = CV.cierra_resolucion_eval
+    orig_funded = CV.cierra_resolucion_funded
+    m_eval = config.obtener().sizing.m_eval.valor()
+    m_fun = config.obtener().sizing.m_fun.valor()
+    CV.cierra_resolucion_eval = _cuenta(orig_eval, m_eval, contador)
+    CV.cierra_resolucion_funded = _cuenta(orig_funded, m_fun, contador)
+    try:
+        yield
+    finally:
+        CV.cierra_resolucion_eval = orig_eval
+        CV.cierra_resolucion_funded = orig_funded
