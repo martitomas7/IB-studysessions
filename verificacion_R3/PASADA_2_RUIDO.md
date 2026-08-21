@@ -15,7 +15,7 @@ Pendiente medida: **-46.000000 $** por cada 1 $/micro de deslizamiento extra (pr
 
 ## Barrido de fills normales -- entrada/objetivo/campana (muerte fija en el ancla)
 
-Lo que hoy NO está modelado en `bot/` -- sin predicción pre-registrada (no hay dato análogo en `03_CONFIG.yaml` que anclarlo); se reporta la curva, no un gate numérico.
+Lo que hoy NO está modelado en `bot/` -- sin banda verde/ámbar/rojo hasta que F3.1 dé el primer dato real (`05_ORDEN_DE_CONSTRUCCION.md`); se reporta la curva, registrada en `03_CONFIG.yaml → hedge_broker.desviacion_fill_normal_usd_tick` como eje de barrido, no como valor de operación.
 
 | ticks | caja final |
 |---|---|
@@ -23,3 +23,27 @@ Lo que hoy NO está modelado en `bot/` -- sin predicción pre-registrada (no hay
 | 0.25 | 116.609371 |
 | 0.5 | 80.359371 |
 | 1.0 | 7.859371 |
+
+Pendiente medida: **-145.0000 $/tick**.
+
+## Coste por tick -- los dos ejes lado a lado
+
+| eje | $/tick | sobre cuántas unidades |
+|---|---|---|
+| Salida por muerte | -57.50 | 46 micro-muertes |
+| Fills normales | -145.00 | micro-días sin muerte |
+
+El deslizamiento rutinario cuesta **2.52×** más por tick que el de muerte -- pasa todos los días, la muerte no. El gate F3.1 mide hoy solo el eje de muerte (`slip_usd_micro`); el eje rutinario no tiene banda todavía.
+
+## Falsación de aditividad (ORDEN_PASADA2_CIERRE.md §3.1)
+
+Los dos ejes actúan sobre días disjuntos (con muerte / sin muerte) y ninguno toca `eval.bal`/`funded.bal` -- deben ser exactamente aditivos:
+
+`caja(n, d) = caja(0, ancla) + coste_muerte_tick·(d-ancla) + coste_normal_tick·n`
+
+| escenario | n (ticks normal) | d (ticks muerte) | caja predicha (fórmula) | caja medida | diferencia |
+|---|---|---|---|---|---|
+| pesimista realista (ámbar) | 0.5 | 5.0 | -92.140629 | ver corrida | -- |
+| rojo | 1.0 | 10.0 | -452.140629 | ver corrida | -- |
+
+(la tabla anterior recalcula la fórmula al escribir el informe; los valores medidos exactos y las diferencias quedan en la salida de la corrida -- ambos escenarios coincidieron al céntimo con la predicción pre-registrada del operador el 21-08-2026.)

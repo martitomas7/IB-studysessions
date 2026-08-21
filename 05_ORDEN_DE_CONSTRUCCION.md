@@ -266,7 +266,7 @@ de Arquitectura §4.
 
 | escalón | qué | criterio para pasar al siguiente |
 |---|---|---|
-| **F3.1** | 1 evaluación real, sola, 10 sesiones | mide los **dos números que el modelo no tiene**. Criterio abajo |
+| **F3.1** | 1 evaluación real, sola, 10 sesiones | mide los **números que el modelo no tiene** (2 con criterio de paso + 1 nuevo sin banda todavía). Detalle abajo |
 | **F3.2** | funded + evaluación | verificar la regla de dirección única contra posiciones **reales** del bróker |
 | **F3.3** | pool completo, 1 mes | cuadre mensual dentro de ±10 % del modelo |
 
@@ -293,6 +293,33 @@ número **por micro**, y deja escrito con qué `m` operaba la cuenta.
 
 Lo mismo con la fricción: `spr_usd` es **por micro y round trip**, no por sesión ni por
 cuenta.
+
+#### El tercer eje: desviación de fill rutinario (Pasada 2, `ORDEN_PASADA2_CIERRE.md` §3.3)
+
+F3.1 medía hasta ahora dos números (`spr_usd`, `slip_usd_micro`) porque eran los dos que
+entraban en el criterio `P(degradar)` de abajo. La Pasada 2 de LA PUERTA GRANDE
+(`verificacion_R3/PASADA_2_RUIDO.md`) midió que hay un **tercer eje** que el modelo tampoco
+tiene, y que además es el **más caro por unidad**: la desviación de fill en los intentos
+**normales** (entrada, objetivo, campana) -- `slip_usd_micro` solo cubre la salida por
+muerte; este eje no tenía ni parámetro.
+
+**F3.1 tiene que medir los dos ejes por separado, en la MISMA evaluación real:**
+
+| eje | qué mide | alimenta |
+|---|---|---|
+| Salida apresurada (stop a mercado) | la desviación de siempre -- la salida de muerte | `slip_usd_micro`, bandas ya existentes (arriba) |
+| Fill rutinario (entrada, campana) | cuánto se desvía un fill normal del precio de referencia | `hedge_broker.desviacion_fill_normal_usd_tick` (`03_CONFIG.yaml`) -- SIN bandas todavía |
+
+Igual que arriba: anota siempre el valor **por micro** y con qué `m` operaba la cuenta -- la
+misma trampa del factor 2/4 aplica a los dos ejes, no solo al de muerte.
+
+**No se inventan bandas verde/ámbar/rojo para el eje nuevo.** Hasta que F3.1 dé el primer
+dato real, ese eje no tiene banda: tiene la curva medida por la Pasada 2 (`coste_si_falla`
+de `desviacion_fill_normal_usd_tick`, `03_CONFIG.yaml`). El laboratorio (`08_LABORATORIO.md`
+§10) ya recoge cotizaciones y spreads, así que el dato va a estar -- lo que falta es pedirlo
+explícitamente durante F3.1 y registrarlo separado del de muerte, no inventar un instrumento
+nuevo. El criterio de paso de la puerta (abajo) sigue siendo solo sobre fricción y
+deslizamiento de muerte -- este tercer eje se registra, no cambia el gate todavía.
 
 #### El criterio de paso: el protocolo pre-registrado, no un número inventado
 

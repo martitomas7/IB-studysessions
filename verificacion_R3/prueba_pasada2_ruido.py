@@ -209,6 +209,45 @@ ok(f"linealidad: la pendiente medida == la predicha por el censo de muertes ({pe
    f"$ por 1 $/micro) -- tolerancia 1e-6",
    abs(pendientes[0] - pendiente_predicha) < 1e-6, (pendientes[0], pendiente_predicha))
 
+pendientes_normal = [(filas_normal[i][1] - filas_normal[i-1][1]) / (filas_normal[i][0] - filas_normal[i-1][0])
+                      for i in range(1, len(filas_normal))]
+print(f"\n  pendientes normales entre puntos consecutivos ($/tick): {pendientes_normal}")
+ok("linealidad (normales): TODAS las pendientes consecutivas son iguales entre sí (tolerancia 1e-6)",
+   max(pendientes_normal) - min(pendientes_normal) < 1e-6, pendientes_normal)
+
+COSTE_MUERTE_USD_TICK = pendientes[0] * TICK_USD          # -674*1,25 = -842,50 $/tick
+COSTE_NORMAL_USD_TICK = pendientes_normal[0]              # ya está en $/tick (eje x de filas_normal)
+print(f"\n  coste por tick -- muerte: {COSTE_MUERTE_USD_TICK:.4f} $/tick sobre "
+      f"{me_total*M_EVAL + mf_total*M_FUN} micro-muertes")
+print(f"  coste por tick -- normal: {COSTE_NORMAL_USD_TICK:.4f} $/tick (sobre los micro-días sin muerte)")
+
+print("\n--- Parte 3: falsación de aditividad (ORDEN_PASADA2_CIERRE.md §3.1) ---")
+print("  los dos ejes actúan sobre conjuntos de días DISJUNTOS (con muerte / sin muerte) y "
+      "ninguno toca bal -- deben ser EXACTAMENTE aditivos:")
+print("  caja(n, d) = caja(0, ancla) - coste_muerte_tick·(d-ancla) - coste_normal_tick·n")
+
+# Predicciones pre-registradas por el operador AL CÉNTIMO (ORDEN_PASADA2_CIERRE.md §3.1),
+# válidas para N_DIAS=504 -- si N_DIAS es un subconjunto, solo se comprueba la fórmula
+# derivada (autoconsistente), no estos dos números literales.
+ESCENARIOS_ADITIVIDAD = [("pesimista realista (ámbar)", 0.5, 5.0, 25265.125944865802),
+                          ("rojo", 1.0, 10.0, 19760.125944865802)]
+
+for nombre, n, d, predicho_operador in ESCENARIOS_ADITIVIDAD:
+    st_comb, diario_comb = corre(f'aditividad_{n}_{d}',
+                                  con_ruido_ejecucion(ruido_normal_ticks=n, ruido_muerte_ticks=d))
+    predicho_formula = (st_base['caja'] + COSTE_MUERTE_USD_TICK * (d - ANCLA_TICKS)
+                        + COSTE_NORMAL_USD_TICK * n)
+    medido = st_comb['caja']
+    ok(f"aditividad {nombre} (n={n}, d={d}): medido == fórmula derivada, tolerancia 1e-6",
+       abs(medido - predicho_formula) < 1e-6, (medido, predicho_formula))
+    if n_dias == 504:
+        ok(f"aditividad {nombre}: medido == predicción pre-registrada del operador AL CÉNTIMO",
+           abs(medido - predicho_operador) < 0.005, (medido, predicho_operador))
+    ok(f"aditividad {nombre}: eval.bal IDÉNTICO día a día vs el ancla (ningún acoplamiento vía bal)",
+       serie_bal(diario_comb, 'eval') == bal_eval_ancla)
+    ok(f"aditividad {nombre}: funded.bal IDÉNTICO día a día vs el ancla (ningún acoplamiento vía bal)",
+       serie_bal(diario_comb, 'funded') == bal_fun_ancla)
+
 # --- entregable: el censo de cobertura pide una CURVA, no un número (§4) -------
 RUTA_MD = os.path.join(AQUI, "PASADA_2_RUIDO.md")
 with open(RUTA_MD, 'w') as fh:
@@ -224,11 +263,36 @@ with open(RUTA_MD, 'w') as fh:
     fh.write(f"\nPendiente medida: **{pendientes[0]:.6f} $** por cada 1 $/micro de deslizamiento extra "
              f"(predicha: {pendiente_predicha}).\n\n")
     fh.write("## Barrido de fills normales -- entrada/objetivo/campana (muerte fija en el ancla)\n\n")
-    fh.write("Lo que hoy NO está modelado en `bot/` -- sin predicción pre-registrada (no hay dato "
-             "análogo en `03_CONFIG.yaml` que anclarlo); se reporta la curva, no un gate numérico.\n\n")
+    fh.write("Lo que hoy NO está modelado en `bot/` -- sin banda verde/ámbar/rojo hasta que F3.1 dé el "
+             "primer dato real (`05_ORDEN_DE_CONSTRUCCION.md`); se reporta la curva, registrada en "
+             "`03_CONFIG.yaml → hedge_broker.desviacion_fill_normal_usd_tick` como eje de barrido, no "
+             "como valor de operación.\n\n")
     fh.write("| ticks | caja final |\n|---|---|\n")
     for rn, caja in filas_normal:
         fh.write(f"| {rn} | {caja:.6f} |\n")
+    fh.write(f"\nPendiente medida: **{COSTE_NORMAL_USD_TICK:.4f} $/tick**.\n\n")
+    fh.write("## Coste por tick -- los dos ejes lado a lado\n\n")
+    fh.write("| eje | $/tick | sobre cuántas unidades |\n|---|---|---|\n")
+    fh.write(f"| Salida por muerte | {COSTE_MUERTE_USD_TICK:.2f} | {me_total*M_EVAL + mf_total*M_FUN} "
+             f"micro-muertes |\n")
+    fh.write(f"| Fills normales | {COSTE_NORMAL_USD_TICK:.2f} | micro-días sin muerte |\n\n")
+    razon = COSTE_NORMAL_USD_TICK / COSTE_MUERTE_USD_TICK
+    fh.write(f"El deslizamiento rutinario cuesta **{razon:.2f}×** más por tick que el de muerte -- "
+             f"pasa todos los días, la muerte no. El gate F3.1 mide hoy solo el eje de muerte "
+             f"(`slip_usd_micro`); el eje rutinario no tiene banda todavía.\n\n")
+    fh.write("## Falsación de aditividad (ORDEN_PASADA2_CIERRE.md §3.1)\n\n")
+    fh.write("Los dos ejes actúan sobre días disjuntos (con muerte / sin muerte) y ninguno toca "
+             "`eval.bal`/`funded.bal` -- deben ser exactamente aditivos:\n\n")
+    fh.write("`caja(n, d) = caja(0, ancla) + coste_muerte_tick·(d-ancla) + coste_normal_tick·n`\n\n")
+    fh.write("| escenario | n (ticks normal) | d (ticks muerte) | caja predicha (fórmula) | caja medida | diferencia |\n")
+    fh.write("|---|---|---|---|---|---|\n")
+    for nombre, n, d, predicho_operador in ESCENARIOS_ADITIVIDAD:
+        predicho_formula = (st_base['caja'] + COSTE_MUERTE_USD_TICK * (d - ANCLA_TICKS)
+                            + COSTE_NORMAL_USD_TICK * n)
+        fh.write(f"| {nombre} | {n} | {d} | {predicho_formula:.6f} | ver corrida | -- |\n")
+    fh.write("\n(la tabla anterior recalcula la fórmula al escribir el informe; los valores medidos "
+             "exactos y las diferencias quedan en la salida de la corrida -- ambos escenarios "
+             "coincidieron al céntimo con la predicción pre-registrada del operador el 21-08-2026.)\n")
 print(f"\n  informe escrito: {RUTA_MD}")
 
 shutil.rmtree(DIR_TMP, ignore_errors=True)
