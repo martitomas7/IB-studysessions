@@ -154,10 +154,21 @@ if __name__ == '__main__':
         ("CONTRA armada al cierre",                          c['contra_armada'],    "contador sí, efecto no (dirección forzada por el pack en replay)"),
         ("Bloqueo de funded (R-2.4)",                        c['bloqueo_funded'],   "tocado" if c['bloqueo_funded'] else "NUNCA"),
         ("Levantamiento del tope por tesorería",             c['tope_tesoreria'],   "tocado" if c['tope_tesoreria'] else "NUNCA"),
-        ("Bloqueo de eval",                                  c['bloqueo_eval'],     "NUNCA -- cobertura 0, objeto de D8 §5"),
-        ("Pool agotado sin sub disponible",                  c['pool_agotado'],     "NUNCA -- cobertura 0, objeto de D8 §5"),
-        ("Degradación (degradado/dia_degradacion)",          1 if st['degradado'] else 0, "NUNCA -- cobertura 0, objeto de D8 §5"),
-        ("Sorteo 50/50 + veto CONTRA decidiendo dirección",  0, "NUNCA, estructuralmente -- en replay la dirección la fuerza el pack (orquestador.py: \"candidata\" es relleno sin efecto). Objeto de D8 §5."),
+        ("Bloqueo de eval",                                  c['bloqueo_eval'],     "0 en el pack -- existe pero el pack no lo toca; §5 aún sin cubrir aparte"),
+        ("Pool agotado sin sub disponible",                  c['pool_agotado'],     "0 en el pack -- existe pero el pack no lo toca; cubierto aparte en "
+                                                                                     "verificacion_R3/prueba_pool_agotado.py (§5.3, 38/38)"),
+        ("Degradación (degradado/dia_degradacion)",          1 if st['degradado'] else 0, "0 en el pack -- existe pero el pack no lo toca; cubierto aparte en "
+                                                                                           "verificacion_R3/prueba_degradacion.py (§5.4, 10/10)"),
+        ("Sorteo 50/50 + veto CONTRA decidiendo dirección",  0, "0 en el pack, ESTRUCTURALMENTE -- en replay la dirección la fuerza el pack "
+                                                                 "(orquestador.py: \"candidata\" es relleno sin efecto) -- pero existe y funciona: "
+                                                                 "cubierto aparte en verificacion_R3/prueba_sorteo_direccion_contra.py (§5.1, 9/9)"),
+        ("Escalada N0-N4 / aviso humano por bloqueo sostenido de funded", 0,
+         "0 (MECANISMO INEXISTENTE, no \"el pack no lo toca\" -- distinción del operador, "
+         "RESPUESTA_D8_ITEM2_BLOQUEO.md §3): ausencia CONFIRMADA y certificada en "
+         "verificacion_R3/prueba_ausencia_escalada_bloqueo.py (§5.2, 10/10) -- ningún camino "
+         "de bot/ escribe pendientes_humano[].dias_esperando ni conecta "
+         "alertas.bloqueada_escalada_dias/proveedor_mata_cuenta_dias a la escalera N0-N4. "
+         "Confirmado por el operador: conocido, aceptado, NO se cablea ahora."),
     ]
 
     with open(RUTA_SALIDA, 'w', encoding='utf-8') as fh:

@@ -18,7 +18,8 @@ sobre un camino con cobertura 0 no es información".
 | CONTRA armada al cierre | 192 | contador sí, efecto no (dirección forzada por el pack en replay) |
 | Bloqueo de funded (R-2.4) | 1 | tocado |
 | Levantamiento del tope por tesorería | 1 | tocado |
-| Bloqueo de eval | 0 | NUNCA -- cobertura 0, objeto de D8 §5 |
-| Pool agotado sin sub disponible | 0 | NUNCA -- cobertura 0, objeto de D8 §5 |
-| Degradación (degradado/dia_degradacion) | 0 | NUNCA -- cobertura 0, objeto de D8 §5 |
-| Sorteo 50/50 + veto CONTRA decidiendo dirección | 0 | NUNCA, estructuralmente -- en replay la dirección la fuerza el pack (orquestador.py: "candidata" es relleno sin efecto). Objeto de D8 §5. |
+| Bloqueo de eval | 0 | 0 en el pack -- existe pero el pack no lo toca; §5 aún sin cubrir aparte |
+| Pool agotado sin sub disponible | 0 | 0 en el pack -- existe pero el pack no lo toca; cubierto aparte en verificacion_R3/prueba_pool_agotado.py (§5.3, 38/38) |
+| Degradación (degradado/dia_degradacion) | 0 | 0 en el pack -- existe pero el pack no lo toca; cubierto aparte en verificacion_R3/prueba_degradacion.py (§5.4, 10/10) |
+| Sorteo 50/50 + veto CONTRA decidiendo dirección | 0 | 0 en el pack, ESTRUCTURALMENTE -- en replay la dirección la fuerza el pack (orquestador.py: "candidata" es relleno sin efecto) -- pero existe y funciona: cubierto aparte en verificacion_R3/prueba_sorteo_direccion_contra.py (§5.1, 9/9) |
+| Escalada N0-N4 / aviso humano por bloqueo sostenido de funded | 0 | 0 (MECANISMO INEXISTENTE, no "el pack no lo toca" -- distinción del operador, RESPUESTA_D8_ITEM2_BLOQUEO.md §3): ausencia CONFIRMADA y certificada en verificacion_R3/prueba_ausencia_escalada_bloqueo.py (§5.2, 10/10) -- ningún camino de bot/ escribe pendientes_humano[].dias_esperando ni conecta alertas.bloqueada_escalada_dias/proveedor_mata_cuenta_dias a la escalera N0-N4. Confirmado por el operador: conocido, aceptado, NO se cablea ahora. |
