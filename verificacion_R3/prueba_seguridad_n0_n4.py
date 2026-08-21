@@ -21,6 +21,15 @@ def ok(nombre, cond, detalle=""):
     print(f"  {'OK ' if cond else 'FALLO'} · {nombre}" + (f"  ({detalle})" if detalle else ""))
 
 
+def _lanza(fn):
+    """True si `fn()` lanza S.NivelInvalidoError -- False si no lanza nada."""
+    try:
+        fn()
+        return False
+    except S.NivelInvalidoError:
+        return True
+
+
 DIR = "/tmp/prueba_seguridad_n0_n4"
 shutil.rmtree(DIR, ignore_errors=True)
 os.makedirs(DIR)
@@ -57,20 +66,25 @@ ok("ninguna legible -> DESCONOCIDO",
 
 print("\n=== §3: sube_a() -- escala sola, monótona, nunca baja ===")
 ok("arranque en frío: nivel_actual = N0", S.nivel_actual(RUTA_NIVEL) == 'N0')
-ok("N0 -> N1 (transición automática 1)", S.sube_a(RUTA_NIVEL, 'N1', 'causa de prueba') == 'N1')
+ok("N0 -> N1 (transición automática 1)",
+   S.sube_a(RUTA_NIVEL, 'N1', 'causa de prueba', causa='reconciliacion') == 'N1')
 ok("nivel.json persiste el cambio", S.nivel_actual(RUTA_NIVEL) == 'N1')
-ok("N1 -> N2 (transición automática 2)", S.sube_a(RUTA_NIVEL, 'N2', 'causa de prueba') == 'N2')
+ok("N1 -> N2 (transición automática 2)",
+   S.sube_a(RUTA_NIVEL, 'N2', 'causa de prueba', causa='reconciliacion') == 'N2')
 ok("intentar 'subir' a N1 (menos severo que N2 actual) NO hace nada -- sube_a nunca baja",
-   S.sube_a(RUTA_NIVEL, 'N1', 'no debería aplicar') == 'N2')
+   S.sube_a(RUTA_NIVEL, 'N1', 'no debería aplicar', causa='reconciliacion') == 'N2')
 ok("sigue en N2 tras el intento anterior", S.nivel_actual(RUTA_NIVEL) == 'N2')
 ok("N2 -> N4 (salto directo, transición automática 3 -- escalar no exige pasar por N3)",
-   S.sube_a(RUTA_NIVEL, 'N4', 'causa de prueba') == 'N4')
+   S.sube_a(RUTA_NIVEL, 'N4', 'causa de prueba', causa='estado_corrupto') == 'N4')
 ok("historial registra las tres subidas con quien='sistema'",
    all(h['quien'] == 'sistema' for h in S.lee_nivel(RUTA_NIVEL)['historial']))
+ok("causa desconocida -- sube_a() la rechaza (vocabulario tipado, "
+   "DECISION_DEGRADACION_N3.md §3)",
+   _lanza(lambda: S.sube_a(RUTA_NIVEL, 'N1', 'motivo', causa='inventada_sin_ton_ni_son')))
 
 print("\n=== §3: LA PUERTA CRÍTICA -- ningún camino de código baja de N3/N4 sin humano ===")
 shutil.rmtree(DIR, ignore_errors=True); os.makedirs(DIR)
-S.sube_a(RUTA_NIVEL, 'N3', 'fabricado para la prueba')
+S.sube_a(RUTA_NIVEL, 'N3', 'fabricado para la prueba', causa='posicion_descuadrada')
 try:
     S.baja_automatica(RUTA_NIVEL, 'N2', 'intento de bajar N3 sin humano')
     disparo_mal = True
@@ -81,7 +95,7 @@ ok("baja_automatica() DESDE N3 lanza NivelInvalidoError -- nunca desciende en si
    not disparo_mal, detalle_n3 if not disparo_mal else "NO LANZÓ")
 ok("tras el intento fallido, sigue en N3 (nivel.json no se tocó)", S.nivel_actual(RUTA_NIVEL) == 'N3')
 
-S.sube_a(RUTA_NIVEL, 'N4', 'fabricado para la prueba')
+S.sube_a(RUTA_NIVEL, 'N4', 'fabricado para la prueba', causa='estado_corrupto')
 try:
     S.baja_automatica(RUTA_NIVEL, 'N1', 'intento de bajar N4 sin humano')
     disparo_mal4 = True
@@ -96,7 +110,7 @@ ok("sigue en N4", S.nivel_actual(RUTA_NIVEL) == 'N4')
 combinaciones_bloqueadas = 0
 for nivel_alto in ('N3', 'N4'):
     shutil.rmtree(DIR, ignore_errors=True); os.makedirs(DIR)
-    S.sube_a(RUTA_NIVEL, nivel_alto, 'fabricado')
+    S.sube_a(RUTA_NIVEL, nivel_alto, 'fabricado', causa='reconciliacion')
     for nivel_bajo in S.NIVELES:
         if S._RANGO[nivel_bajo] >= S._RANGO[nivel_alto]:
             continue
@@ -111,16 +125,16 @@ ok(f"barrido exhaustivo: TODAS las {esperadas} combinaciones (nivel_alto en {{N3
 
 print("\n=== §3: baja_automatica() SÍ funciona desde N1/N2 (transiciones automáticas legítimas) ===")
 shutil.rmtree(DIR, ignore_errors=True); os.makedirs(DIR)
-S.sube_a(RUTA_NIVEL, 'N1', 'causa temporal')
+S.sube_a(RUTA_NIVEL, 'N1', 'causa temporal', causa='reconciliacion')
 ok("N1 -> N0 automático ('solo, al desaparecer la causa') -- transición automática 4",
    S.baja_automatica(RUTA_NIVEL, 'N0', 'causa desaparecida') == 'N0')
-S.sube_a(RUTA_NIVEL, 'N2', 'fin de sesión con pérdida')
+S.sube_a(RUTA_NIVEL, 'N2', 'fin de sesión con pérdida', causa='reconciliacion')
 ok("N2 -> N0 automático ('solo, al día siguiente') -- transición automática 5",
    S.baja_automatica(RUTA_NIVEL, 'N0', 'nuevo día de negociación') == 'N0')
 
 print("\n=== §3: baja_humana() SÍ funciona desde N3/N4, y exige 'quien' real ===")
 shutil.rmtree(DIR, ignore_errors=True); os.makedirs(DIR)
-S.sube_a(RUTA_NIVEL, 'N3', 'fabricado')
+S.sube_a(RUTA_NIVEL, 'N3', 'fabricado', causa='posicion_descuadrada')
 try:
     S.baja_humana(RUTA_NIVEL, 'N0', quien='sistema', motivo='intento de colarse')
     colo = True

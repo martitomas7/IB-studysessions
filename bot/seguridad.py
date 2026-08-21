@@ -34,6 +34,21 @@ NOMBRES = {
     'N3': 'KILL',
     'N4': 'CONGELADO',
 }
+
+# DECISION_DEGRADACION_N3.md §3 (revisión operador 21-08-2026): "la escalera
+# responde a 'qué le está permitido hacer al bot ahora mismo', y esa pregunta
+# es la misma venga la causa de un descuadre de patas o de un muro de
+# capital. Dos sistemas de escalada en paralelo es peor que uno." UNA sola
+# escalera, con causa TIPADA -- para que el panel diga por qué está donde
+# está. Vocabulario MÍNIMO que da el operador: reconciliacion,
+# posicion_descuadrada, estado_corrupto, degradacion_tesoreria -- más
+# `presupuesto_reinicios` (añadido aquí, no en la respuesta del operador:
+# `reacciona_a_presupuesto_reinicios_agotado`, ya existente, no encajaba en
+# ninguna de las cuatro -- "reversible: si más adelante molesta, se separa").
+CAUSAS = frozenset({
+    'reconciliacion', 'posicion_descuadrada', 'estado_corrupto',
+    'degradacion_tesoreria', 'presupuesto_reinicios',
+})
 # 10_SEGURIDAD.md §3, columna "quién lo baja": N1 ("solo, al desaparecer la
 # causa") y N2 ("solo, al día siguiente") admiten desescalado AUTOMÁTICO;
 # N3 y N4 ("humano, explícito") NUNCA. El pedido de trabajo D8 §2 lo repite
@@ -148,21 +163,31 @@ def nivel_actual(ruta):
     return lee_nivel(ruta)['nivel']
 
 
-def sube_a(ruta, nivel_nuevo, motivo):
+def sube_a(ruta, nivel_nuevo, motivo, causa):
     """§3: "el sistema sube solo" -- NUNCA exige autorización humana. Si
     `nivel_nuevo` no es más severo que el nivel ya alcanzado, no hace
     nada -- subir nunca reduce ni reescribe un nivel ya vigente (un fallo
     de menor severidad detectado DESPUÉS de un N3 no lo baja a N2:
     escalar es monótono). Devuelve el nivel final (el nuevo, o el que ya
-    había si `nivel_nuevo` no era más severo)."""
+    había si `nivel_nuevo` no era más severo).
+
+    `causa` (DECISION_DEGRADACION_N3.md §3, revisión operador
+    21-08-2026): OBLIGATORIA, uno de `CAUSAS` -- para que el panel diga
+    POR QUÉ está donde está, no solo un `motivo` de texto libre. Idempotente
+    en la práctica: llamar de nuevo con la MISMA causa/nivel, ya vigente o
+    menos severo, no hace nada (la monotonía de arriba ya lo cubre) -- así
+    una guarda puede llamarse todos los días sin comprobar antes el nivel
+    actual (DECISION_DEGRADACION_N3.md §5, test #3: "evaluada cada día")."""
     if nivel_nuevo not in NIVELES:
         raise NivelInvalidoError(f"nivel desconocido: {nivel_nuevo!r}")
+    if causa not in CAUSAS:
+        raise NivelInvalidoError(f"causa desconocida: {causa!r} -- debe ser una de {sorted(CAUSAS)}")
     registro = lee_nivel(ruta)
     actual = registro.get('nivel', 'N0')
     if _RANGO[nivel_nuevo] > _RANGO[actual]:
         registro['nivel'] = nivel_nuevo
         registro.setdefault('historial', []).append(
-            dict(de=actual, a=nivel_nuevo, motivo=motivo, quien='sistema'))
+            dict(de=actual, a=nivel_nuevo, motivo=motivo, causa=causa, quien='sistema'))
         _guarda_nivel(registro, ruta)
         return nivel_nuevo
     return actual
@@ -234,14 +259,14 @@ def reacciona_a_estado_invalido(ruta_nivel, detalle):
     EstadoInvalidoError` de quien arranca el bot -- el propio
     `estado.json` roto es la razón por la que el nivel NO puede vivir ahí
     (ver docstring del módulo)."""
-    return sube_a(ruta_nivel, 'N4', motivo=f"estado.json inválido: {detalle}")
+    return sube_a(ruta_nivel, 'N4', motivo=f"estado.json inválido: {detalle}", causa='estado_corrupto')
 
 
 def reacciona_a_liquidacion_forzosa(ruta_nivel, detalle):
     """§4.B/D8.3: el proveedor liquidó la prop por su cuenta -> el hedge se
     cierra (ya lo hace `deteccion_liquidacion.resuelve_liquidacion_forzosa`)
     y el nivel sube a N2 ("plano y parado hoy")."""
-    return sube_a(ruta_nivel, 'N2', motivo=f"liquidación forzosa: {detalle}")
+    return sube_a(ruta_nivel, 'N2', motivo=f"liquidación forzosa: {detalle}", causa='reconciliacion')
 
 
 def reacciona_a_presupuesto_reinicios_agotado(ruta_nivel, detalle):
@@ -254,7 +279,8 @@ def reacciona_a_presupuesto_reinicios_agotado(ruta_nivel, detalle):
     máquina, el script solo tenga que llamarla (o su equivalente
     PowerShell escriba el mismo `nivel.json`) en vez de limitarse a
     `exit 1`."""
-    return sube_a(ruta_nivel, 'N3', motivo=f"presupuesto de reinicios agotado: {detalle}")
+    return sube_a(ruta_nivel, 'N3', motivo=f"presupuesto de reinicios agotado: {detalle}",
+                  causa='presupuesto_reinicios')
 
 
 def reacciona_a_desconocido(ruta_nivel, detalle):
@@ -262,7 +288,7 @@ def reacciona_a_desconocido(ruta_nivel, detalle):
     una -- responsabilidad de quien llama) y sube a N2 ("parar hasta
     intervención humana", que aquí empieza por no reabrir hoy; si la
     causa persiste al día siguiente, quien llama puede volver a subir)."""
-    return sube_a(ruta_nivel, 'N2', motivo=f"estado DESCONOCIDO: {detalle}")
+    return sube_a(ruta_nivel, 'N2', motivo=f"estado DESCONOCIDO: {detalle}", causa='reconciliacion')
 
 
 def reacciona_a_violacion_tamanos(ruta_nivel, detalle):
@@ -272,4 +298,39 @@ def reacciona_a_violacion_tamanos(ruta_nivel, detalle):
     dentro de ventana (TRANSICION, esperado), un tamaño que NO corresponde
     con dos patas SÍ leídas es una violación del invariante que solo se
     explica por un bug propio o una manipulación -- más grave que N2."""
-    return sube_a(ruta_nivel, 'N3', motivo=f"tamaños de las dos patas no corresponden: {detalle}")
+    return sube_a(ruta_nivel, 'N3', motivo=f"tamaños de las dos patas no corresponden: {detalle}",
+                  causa='posicion_descuadrada')
+
+
+def reacciona_a_degradacion_tesoreria(ruta_nivel, dia_negociacion, dia_degradacion):
+    """DECISION_DEGRADACION_N3.md (revisión operador 21-08-2026): R-7.2
+    ("caja - retirado < -muro") es PEGAJOSA por norma -- una vez `True`,
+    nunca se revierte sola. N1/N2 se bajan solos ("al desaparecer la
+    causa" / "al día siguiente"), pero con una causa que por diseño NUNCA
+    desaparece, usarlos prometería un descenso automático que o no llega
+    (N1) o llega mañana reanudando la operación con el capital ya
+    perforado (N2). N3 es el único nivel cuya salida es "humano,
+    explícito" -- exactamente la semántica de un estado irreversible.
+    Cruzar el muro significa "el capital ya no cubre lo que el circuito
+    compromete" (`muro = capital - margen y exposición comprometidos`):
+    abrir mañana sería operar el hedge sin el margen que la propia
+    identidad de cobertura da por supuesto.
+
+    Quien llama (`bot/bucle_del_dia.py`) invoca esto TODOS los días en que
+    `estado['degradado']` sea `True`, sin comprobar antes el nivel actual
+    -- `sube_a()` ya es monótono/idempotente, así que si un humano bajase
+    el nivel a mano con `degradado` todavía `True`, el bot vuelve a subir
+    a N3 solo, al día siguiente (la barrera no es decorativa).
+
+    IMPORTANTE (norma, no solo del bot): el modelo congelado (`modelo/`,
+    `pipeline3.py`) NO simula el régimen degradado -- mide una
+    probabilidad, no opera un capital, así que sigue corriendo más allá
+    del cruce del muro sin parar (fiel a lo que es: un simulador). Por
+    tanto, TODO resultado del modelo (P(degradar), la cifra de $/mes, el
+    replay de 504 días) correspondiente a un linaje que cruza el muro deja
+    de ser válido a partir de ese día -- el bot, aquí, SÍ para; el modelo
+    seguía midiendo. No son la misma cosa y no hay que confundirlas."""
+    motivo = f"degradación de tesorería (R-7.2), día {dia_negociacion}"
+    if dia_degradacion is not None and dia_degradacion != dia_negociacion:
+        motivo += f" (fijada originalmente el día {dia_degradacion})"
+    return sube_a(ruta_nivel, 'N3', motivo=motivo, causa='degradacion_tesoreria')

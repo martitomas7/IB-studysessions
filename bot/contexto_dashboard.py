@@ -20,7 +20,7 @@ replay de 504 días con `desviaciones_activas=[]` sigue dando exactamente
 504 días · 0 fallos · caja final 29.134,87 $ tras el cableado (el contador
 es una adición pura, nunca comparada por `tests/runner_replay_v10.py`).
 """
-from bot import config, comandos, tesoreria
+from bot import config, comandos, seguridad, tesoreria
 
 
 def _agrega_eventos(historial_diario):
@@ -40,12 +40,19 @@ def _agrega_eventos(historial_diario):
 
 def construye(estado, diario_hoy, historial_diario, ahora_iso=None, ahora_monotono=0.0,
               mercado_snapshots=None, incidencias_recientes=None, incidencias_contadores=None,
-              cifras_citadas=None, pendientes_extra=None):
+              cifras_citadas=None, pendientes_extra=None, nivel_registro=None):
     """`estado`: el dict de estado.json (ya cargado). `diario_hoy`: la línea
     de diario del día actual (o None si no ha corrido ningún día todavía).
     `historial_diario`: lista de líneas de diario (para E6/bloque 6) -- en
     la prueba de D-C esto es el diario de los 504 días del replay; en
-    producción, el diario real acumulado hasta hoy."""
+    producción, el diario real acumulado hasta hoy.
+
+    `nivel_registro` (DECISION_DEGRADACION_N3.md §3/§5, test 5: "que la
+    causa tipada llega al panel y se pinta"): el dict que devuelve
+    `bot/seguridad.py::lee_nivel(ruta_nivel)` (o `None` si quien llama
+    todavía no lo ha leído -- este módulo NUNCA lee ficheros él mismo, ver
+    docstring de arriba) -- mismo principio que `mercado_snapshots`/
+    `incidencias_recientes`: datos YA cargados, nunca una ruta."""
     cfg = config.obtener()
     rancio_seg = cfg.dashboard.rancio_seg.valor()
     dias_por_mes = cfg.tesoreria.dias_por_mes.valor()
@@ -53,6 +60,7 @@ def construye(estado, diario_hoy, historial_diario, ahora_iso=None, ahora_monoto
     incidencias_recientes = incidencias_recientes or []
     incidencias_contadores = incidencias_contadores or {}
     pendientes_extra = pendientes_extra or []
+    nivel_registro = nivel_registro or seguridad.nivel_de_fabrica()
 
     direccion = diario_hoy['direccion'] if diario_hoy else estado.get('direccion', 1)
     ventana = diario_hoy['ventana'] if diario_hoy else '—'
@@ -69,10 +77,23 @@ def construye(estado, diario_hoy, historial_diario, ahora_iso=None, ahora_monoto
              estado_feed=(ultimo_snap['estado_feed'] if ultimo_snap else 'DESCONOCIDO')),
         dict(nombre='prop (MFF/Tradovate)', hay_conexion=True, estado_feed='DESCONOCIDO'),
     ]
+    nivel_hoy = nivel_registro.get('nivel', 'N0')
+    historial_nivel = nivel_registro.get('historial', [])
+    ultima_transicion = historial_nivel[-1] if historial_nivel else None
+    contencion = dict(
+        nivel=nivel_hoy, nombre=seguridad.NOMBRES.get(nivel_hoy, nivel_hoy),
+        causa=(ultima_transicion or {}).get('causa'), motivo=(ultima_transicion or {}).get('motivo'),
+        quien=(ultima_transicion or {}).get('quien'),
+    )
     ahora_block = dict(
         direccion=direccion, ventana=ventana, barra_actual=None,
         patas=patas, conexiones=conexiones,
-        semaforo_global='critico' if estado['degradado'] else 'bien',
+        # DECISION_DEGRADACION_N3.md §3: "una sola escalera" -- el semáforo
+        # global ahora refleja el nivel N0-N4 de verdad (antes solo miraba
+        # `degradado`, que es una de las CAUSAS posibles, no la única).
+        semaforo_global=('bien' if nivel_hoy == 'N0'
+                          else ('critico' if nivel_hoy in ('N3', 'N4') else 'grave')),
+        contencion=contencion,
     )
 
     # --- bloque 2: RIESGO --------------------------------------------------

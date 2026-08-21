@@ -17,11 +17,14 @@ operador, otra por esta misma sesión) -- si alguno cambia, es una
 regresión real en el camino de negocio correspondiente, no una cifra
 que se pueda tocar sin darse cuenta.
 
-Explícitamente NO cubre (cobertura 0, ver ANALISIS_PUERTA_GRANDE.md §3):
-el sorteo de dirección + veto CONTRA (en replay la dirección la fuerza
-el pack, el sorteo real nunca corre), el bloqueo de eval, el pool
-agotado sin sub disponible, y la degradación -- esos son, precisamente,
-el objeto de D8 §5 (días adversarios), no de este censo."""
+Explícitamente NO cubre (cobertura 0 EN EL PACK, ver ANALISIS_PUERTA_GRANDE.md
+§3): el sorteo de dirección + veto CONTRA (en replay la dirección la
+fuerza el pack, el sorteo real nunca corre), el bloqueo de eval, el pool
+agotado sin sub disponible, y la degradación -- esos eran, precisamente,
+el objeto de D8 §5 (días adversarios); sorteo/pool/degradación ya tienen
+su propia prueba dedicada (§5.1/§5.3/§5.4, ver la tabla de abajo) --
+"cobertura 0 en el pack" ya no significa "sin probar", solo "el pack de
+504 días no lo ejercita". Bloqueo de eval sigue sin prueba dedicada."""
 import os
 import sys
 
@@ -158,7 +161,9 @@ if __name__ == '__main__':
         ("Pool agotado sin sub disponible",                  c['pool_agotado'],     "0 en el pack -- existe pero el pack no lo toca; cubierto aparte en "
                                                                                      "verificacion_R3/prueba_pool_agotado.py (§5.3, 38/38)"),
         ("Degradación (degradado/dia_degradacion)",          1 if st['degradado'] else 0, "0 en el pack -- existe pero el pack no lo toca; cubierto aparte en "
-                                                                                           "verificacion_R3/prueba_degradacion.py (§5.4, 10/10)"),
+                                                                                           "verificacion_R3/prueba_degradacion.py (§5.4, 28/28) -- desde "
+                                                                                           "DECISION_DEGRADACION_N3.md, degradado=True escala a N3 (KILL) de "
+                                                                                           "verdad, cableado en bot/bucle_del_dia.py"),
         ("Sorteo 50/50 + veto CONTRA decidiendo dirección",  0, "0 en el pack, ESTRUCTURALMENTE -- en replay la dirección la fuerza el pack "
                                                                  "(orquestador.py: \"candidata\" es relleno sin efecto) -- pero existe y funciona: "
                                                                  "cubierto aparte en verificacion_R3/prueba_sorteo_direccion_contra.py (§5.1, 9/9)"),

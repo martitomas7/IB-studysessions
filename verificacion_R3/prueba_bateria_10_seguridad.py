@@ -47,7 +47,8 @@ conoc_1 = S.clasifica_conocimiento(hedge_legible=True, prop_legible=True, estado
 ok("hedge desnudo tras reinicio (prop=0, hedge=-4) se clasifica CONOCIDO-INSEGURO",
    conoc_1 == 'CONOCIDO-INSEGURO', (clasif_1, conoc_1))
 S.reacciona_a_desconocido(RUTA_NIVEL, "hedge desnudo tras reinicio (prueba #1)") \
-    if conoc_1 == 'DESCONOCIDO' else S.sube_a(RUTA_NIVEL, 'N2', "hedge desnudo tras reinicio (prueba #1)")
+    if conoc_1 == 'DESCONOCIDO' else S.sube_a(RUTA_NIVEL, 'N2', "hedge desnudo tras reinicio (prueba #1)",
+                                               causa='posicion_descuadrada')
 ok("la reacción deja el nivel en N2 ('plano y parado hoy', tras aplanar el hedge)",
    S.nivel_actual(RUTA_NIVEL) == 'N2')
 
@@ -86,7 +87,8 @@ ok("las DOS patas del bracket SIGUEN vivas en el bróker (ACEPTADA) pese a la co
    a4.leer_estado_orden(b4['order_id_stop']) == 'ACEPTADA'
    and a4.leer_estado_orden(b4['order_id_limite']) == 'ACEPTADA')
 # la posición sigue protegida -- lo abierto sigue su curso normal; solo se prohíbe abrir NUEVO
-S.sube_a(RUTA_NIVEL, 'N1', "conexión caída con posición ya protegida por órdenes en reposo (prueba #4)")
+S.sube_a(RUTA_NIVEL, 'N1', "conexión caída con posición ya protegida por órdenes en reposo (prueba #4)",
+          causa='reconciliacion')
 ok("el nivel sube a N1 (SIN APERTURAS) -- NO a N2, porque lo ya abierto sigue protegido",
    S.nivel_actual(RUTA_NIVEL) == 'N1')
 # al reconectar, la orden SIGUE resolviéndose con normalidad -- confirma que nunca dejó de vigilar

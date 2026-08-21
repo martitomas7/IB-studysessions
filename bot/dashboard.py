@@ -77,6 +77,17 @@ def _bloque_ahora(ctx):
         f'<span class="num">{_esc(p["tipo"])}={_num(p["cantidad"], 0)}</span></div>'
         for p in a['patas']
     ) or '<div class="atenuado">sin patas abiertas</div>'
+    # DECISION_DEGRADACION_N3.md §3/§5 (test 5): la causa tipada de la
+    # escalera N0-N4 se pinta -- nunca solo el nivel a secas, siempre con
+    # la causa y el motivo que la acompañan (mismo principio de §6.3: "los
+    # colores de estado nunca van solos").
+    c = a.get('contencion', {'nivel': 'N0', 'nombre': 'NORMAL', 'causa': None, 'motivo': None})
+    nivel_estado = ('bien' if c['nivel'] == 'N0'
+                    else ('critico' if c['nivel'] in ('N3', 'N4') else 'grave'))
+    etiqueta_nivel = f"{c['nivel']} · {c['nombre']}"
+    detalle_nivel = (f'<div class="atenuado">causa: {_esc(c["causa"])}'
+                      + (f' — {_esc(c["motivo"])}' if c.get('motivo') else '') + '</div>'
+                      if c.get('causa') else '')
     return f'''
     <section class="bloque" id="bloque-ahora">
       <h2>1 · AHORA</h2>
@@ -85,6 +96,7 @@ def _bloque_ahora(ctx):
         <div><span class="etiqueta">Ventana</span><span class="valor">{_esc(a['ventana'])}</span></div>
         <div><span class="etiqueta">Barra actual</span><span class="valor num">{_num(a['barra_actual'],0)}</span></div>
         <div><span class="etiqueta">Semáforo global</span><span class="valor">{_semaforo(a['semaforo_global'])}</span></div>
+        <div><span class="etiqueta">Nivel de contención</span><span class="valor">{_semaforo(nivel_estado, etiqueta_nivel)}</span>{detalle_nivel}</div>
       </div>
       <div class="subseccion"><h3>Patas abiertas</h3>{patas}</div>
       <div class="subseccion"><h3>Conexiones</h3>{conexiones}</div>

@@ -1,47 +1,42 @@
 # -*- coding: utf-8 -*-
-"""D8 §5.4 (ANALISIS_PUERTA_GRANDE.md §5): degradación (R-7.2) --
-cobertura 0 en la Puerta Grande, la más profunda de las cuatro (ni
-siquiera el CÁLCULO se ha ejercitado nunca -- ver
-`verificacion_R3/CENSO_COBERTURA.md`: "Degradación: 0 -- NUNCA"). El
-pedido: "Forzar la caja por debajo de la parada dinámica y comprobar que
-`degradado`/`dia_degradacion` se fijan y que el circuito para de verdad."
+"""D8 §5.4 (ANALISIS_PUERTA_GRANDE.md §5) + DECISION_DEGRADACION_N3.md
+(revisión operador 21-08-2026): degradación (R-7.2) -- cobertura 0 en la
+Puerta Grande, la más profunda de las cuatro (ni siquiera el CÁLCULO se
+había ejercitado nunca).
 
-Investigación previa a fabricar nada (R1/R3, mismo principio que §5.2):
-`bot/tesoreria.py::muro_dinamico()`/`comprueba_degradacion()` son
-funciones puras -- no hace falta erosionar caja día a día, basta con
-LEER el muro real (mismas funciones, sin tocar nada) y forzar
-`st['caja']` directamente por debajo de él, confirmado antes de usarlo.
+Historia de esta prueba, para que quede trazada (R1/R3):
 
-Grep exhaustivo, ANTES de escribir el test, de qué hace HOY el resto del
-sistema con `st['degradado']` -- para no fabricar un escenario y suponer
-que algo reacciona cuando no es así:
+1. Primera versión (commit 3eee10e): confirmó que `degradado`/
+   `dia_degradacion` se fijan y son sticky, pero encontró y PINEÓ un
+   hallazgo real -- el circuito NO paraba de verdad, solo se pintaba en
+   el panel.
+2. El operador revisó el hallazgo por su cuenta (DECISION_DEGRADACION_N3.md)
+   y decidió: **degradación -> N3 (KILL)**, evaluado CADA día, cableado en
+   `bot/bucle_del_dia.py` vía la nueva
+   `bot/seguridad.py::reacciona_a_degradacion_tesoreria()`. Motivos (suyos,
+   no inventados aquí): `comprueba_degradacion()` corre DESPUÉS de las
+   sesiones del día -- cuando se detecta, el día ya está cerrado y el bot
+   ya está PLANO, así que la única decisión real es "¿abre mañana?", y la
+   respuesta, con una causa que por norma NUNCA desaparece (R-7.2: sticky),
+   es no -- N3 es el único nivel cuya salida es "humano, explícito", la
+   semántica correcta de un estado irreversible. También decidió ampliar
+   `seguridad.py` a una escalera ÚNICA con causa tipada (`CAUSAS`), en vez
+   de un segundo sistema de escalada en paralelo.
+3. Esta versión (la actual) reemplaza la Parte 3 original (que pineaba el
+   hallazgo) por los 5 tests que el operador pidió explícitamente para
+   confirmar el cableado -- la Parte 1/2 (el cálculo, sticky) se
+   mantienen sin cambios, siguen siendo ciertas.
 
-- `bot/orquestador.py::procesa_dia()` (líneas 187-190): calcula el muro,
-  llama a `comprueba_degradacion()`, y fija `degradado`/`dia_degradacion`
-  -- ESTO SÍ está cableado y se confirma abajo, por primera vez.
-- `bot/contexto_dashboard.py`/`bot/dashboard.py`: SOLO leen `degradado`
-  para pintar un semáforo ('crítico' vs 'bien') -- lectura, cero acción.
-- `bot/bucle_del_dia.py`, el bucle real de producción (línea ~90): el
-  ÚNICO chequeo que para el bucle día a día es
-  `if SEG.nivel_actual(ruta_nivel) != 'N0': break` -- la escalera N0-N4 de
-  `bot/seguridad.py`. `degradado` NO aparece en ningún sitio de este
-  fichero. Y nada, en NINGÚN módulo de `bot/`, llama a
-  `seguridad.sube_a()`/`reacciona_a_*` por causa de la degradación.
-
-Conclusión, confirmada abajo con el bucle REAL, no solo leída: **la
-degradación se CALCULA y se FIJA correctamente (sticky, no se revierte
-sola), pero el circuito NO para** -- sigue negociando exactamente igual
-que si `degradado` fuera `False`. Es el MISMO patrón que §5.2 (bloqueo
-sostenido de funded): una señal de negocio correcta que hoy solo
-alimenta el panel, sin ningún camino de código que la convierta en una
-parada real. No se arregla aquí -- cablear "degradado detiene el bucle"
-es una decisión de negocio real (¿para inmediatamente? ¿ese mismo día,
-al cierre? ¿solo humano puede reanudar, como N3/N4?) que le corresponde
-al operador (R2/R6), no a esta sesión. Se deja medida, y PINEADA como
-regresión nombrada -- si algún día se cablea, este test debe empezar a
-fallar y alguien tiene que revisarlo, no que el cambio pase
-desapercibido."""
+IMPORTANTE, norma, no solo del bot (palabras del operador, textual): "el
+modelo congelado (`modelo/`, `pipeline3.py`) NO simula el régimen
+degradado -- mide una probabilidad, no opera un capital, así que sigue
+corriendo más allá del cruce del muro sin parar (fiel a lo que es: un
+simulador)." Por tanto TODO resultado de `modelo/` (P(degradar), la cifra
+de $/mes, el replay de 504 días) correspondiente a un linaje que cruza el
+muro deja de ser válido a partir de ese día -- el bot, aquí, SÍ para; el
+modelo seguía midiendo. No son la misma cosa."""
 import os
+import random
 import shutil
 import sys
 
@@ -49,7 +44,8 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 ING = os.path.dirname(AQUI)
 sys.path.insert(0, ING)
 
-from bot import bucle_del_dia as BDD, config, estado as E, orquestador as O, seguridad as SEG, tesoreria as T
+from bot import (bucle_del_dia as BDD, config, contexto_dashboard as CD, dashboard as DASH,
+                  estado as E, orquestador as O, seguridad as SEG, tesoreria as T)
 from bot.adaptador_falso import AdaptadorFalso
 from bot.fuente_barras import Barra, ContextoDia
 
@@ -71,8 +67,8 @@ def _camino_plano():
 
 
 # =============================================================================
-# 1. El CÁLCULO -- primera vez que se ejercita, por primera vez con el
-#    bucle real (orquestador.procesa_dia()), no reconstruido a mano (R2/R3).
+# 1. El CÁLCULO -- primera vez que se ejercita, con el bucle real
+#    (orquestador.procesa_dia()), no reconstruido a mano (R2/R3).
 # =============================================================================
 print("=== 1. forzar caja por debajo del muro dinámico -- degradado/dia_degradacion "
       "se fijan de verdad ===")
@@ -107,32 +103,38 @@ ok("día 2, con la caja recuperada del todo: degradado SIGUE True (mismo princip
 ok("día 2: dia_degradacion NO cambia -- sigue apuntando al PRIMER día que cruzó (1), "
    "no se reescribe", st['dia_degradacion'] == 1, st['dia_degradacion'])
 
+
 # =============================================================================
-# 3. El hallazgo confirmado: el circuito NO para -- ni con el bucle REAL de
-#    producción. degradado=True desde el día 1, seguido de más días en
-#    los que sigue negociando exactamente igual.
+# Arnés común para las partes 3-6: un día a la vez, por el bucle REAL de
+# producción, con eval FORZADA inactiva (pool agotado + emergencia apagada
+# por el operador, mismo patrón que prueba_pool_agotado.py) -- así el muro
+# dinámico (`tesoreria.muro_dinamico(0, 0)`) se queda CONSTANTE mientras
+# dura la prueba (si eval se activase, el muro se movería -- R-7.1 lo resta
+# de la exposición comprometida -- y el cruce exacto dejaría de ser
+# predecible). Nada de esto cambia la aritmética que se está probando
+# (R-7.2 no distingue si eval está activa o no); solo hace el escenario
+# determinista.
 # =============================================================================
-print("\n=== 3. el circuito, con el bucle REAL de producción, NO PARA por degradación ===")
+DIR = "/tmp/prueba_degradacion"
 
 
-class FuentePlanaNDias:
-    """N días '22h' (b0v=0) de barras completamente planas -- ni funded ni
-    eval mueren ni se activan/aprueban en la ventana corta del test (no
-    hace falta: lo único que importa aquí es si el BUCLE se detiene por
-    `degradado`, no la aritmética de sesión, que ya cubren otros
-    tests)."""
-    def __init__(self, n_dias, nb=NB, p0=P0):
-        self.n_dias = n_dias
+class FuentePlanaUnDia:
+    """Un solo día '22h' (b0v=0), barras planas -- se construye una
+    instancia NUEVA por cada llamada a `bucle_del_dia()` (cada una es,
+    literalmente, una corrida de producción de UN día -- exactamente como
+    se invocaría el bot real, una vez al día, leyendo/escribiendo
+    `estado.json`/`nivel.json` entre invocaciones)."""
+    def __init__(self, nb=NB, p0=P0):
         self.nb = nb
         self.p0 = p0
-        self._dia_actual = 0
+        self._abierto = False
         self._b = -1
 
     def dia_disponible(self):
-        return self._dia_actual < self.n_dias
+        return not self._abierto
 
     def abre_dia(self):
-        self._dia_actual += 1
+        self._abierto = True
         self._b = -1
         return ContextoDia()
 
@@ -145,52 +147,166 @@ class FuentePlanaNDias:
         pass
 
 
-import random
+def _prepara_estado_base(caja_inicial):
+    st0 = E.nuevo('v10', checksum)
+    st0['pool'] = dict(frescas=0, rotas=2, subs=[])
+    st0['desviaciones_activas'] = [dict(palanca='emergencia', desde_dia=1, hasta_dia=1000,
+                                         quien='prueba_degradacion',
+                                         ts_pared='2026-08-21T00:00:00Z')]
+    st0['caja'] = caja_inicial
+    return st0
 
-DIR = "/tmp/prueba_degradacion"
+
+def _corre_un_dia(ruta_estado, ruta_nivel, dir_run, semilla):
+    adaptador = AdaptadorFalso()
+    return BDD.bucle_del_dia(
+        FuentePlanaUnDia(), adaptador,
+        cuenta_hedge_eval="CH-EVAL", cuenta_prop_eval="CP-EVAL",
+        cuenta_hedge_funded="CH-FUN", cuenta_prop_funded="CP-FUN",
+        instrumento_prop="MES",
+        ruta_estado=ruta_estado, ruta_nivel=ruta_nivel,
+        ruta_ordenes=os.path.join(dir_run, "ordenes"), ruta_lock=os.path.join(dir_run, "bot.lock"),
+        dir_instantaneas=os.path.join(dir_run, "instantaneas"), dias_retenidos=5,
+        ruta_diario=os.path.join(dir_run, "diario.jsonl"),
+        rng=random.Random(semilla), dormir=lambda s: None)
+
+
+MURO_REF = T.muro_dinamico(0.0, 0.0)   # constante durante todo el arnés -- eval forzada inactiva
+
 shutil.rmtree(DIR, ignore_errors=True)
 os.makedirs(DIR)
-ruta_estado = os.path.join(DIR, "estado.json")
-ruta_nivel = os.path.join(DIR, "nivel.json")
+RUTA_ESTADO = os.path.join(DIR, "estado.json")
+RUTA_NIVEL = os.path.join(DIR, "nivel.json")
 
-st_inicial = E.nuevo('v10', checksum)
-muro_ref = T.muro_dinamico(0.0, 0.0)
-st_inicial['caja'] = -(muro_ref + MARGEN_BAJO_MURO)
-E.guardar(st_inicial, ruta_estado)
+# =============================================================================
+# 3. EL DÍA EXACTO (DECISION_DEGRADACION_N3.md §5, test 2): cruzar el muro
+#    el día D -> N3 el día D, N0 el día D-1.
+# =============================================================================
+print("\n=== 3. el día exacto: N0 el día D-1, N3 el día D (por el bucle REAL) ===")
 
-N_DIAS = 5
-adaptador = AdaptadorFalso()
-fuente = FuentePlanaNDias(N_DIAS)
-st_final = BDD.bucle_del_dia(
-    fuente, adaptador,
-    cuenta_hedge_eval="CH-EVAL", cuenta_prop_eval="CP-EVAL",
-    cuenta_hedge_funded="CH-FUN", cuenta_prop_funded="CP-FUN",
-    instrumento_prop="MES",
-    ruta_estado=ruta_estado, ruta_nivel=ruta_nivel,
-    ruta_ordenes=os.path.join(DIR, "ordenes"), ruta_lock=os.path.join(DIR, "bot.lock"),
-    dir_instantaneas=os.path.join(DIR, "instantaneas"), dias_retenidos=5,
-    ruta_diario=os.path.join(DIR, "diario.jsonl"),
-    rng=random.Random(20260821), dormir=lambda s: None)
+E.guardar(_prepara_estado_base(-(MURO_REF - 1000.0)), RUTA_ESTADO)   # sano, holgado 1000$
+st_d1 = _corre_un_dia(RUTA_ESTADO, RUTA_NIVEL, DIR, semilla=1)
+ok("día 1 (sano): degradado sigue False", st_d1['degradado'] is False, st_d1['degradado'])
+ok("día 1 (sano): nivel sigue N0", SEG.nivel_actual(RUTA_NIVEL) == 'N0', SEG.nivel_actual(RUTA_NIVEL))
 
-ok(f"el bucle en vivo procesó los {N_DIAS} días PEDIDOS -- confirmado: NO se detuvo "
-   f"por causa de la degradación (si parase, dia_negociacion sería < {N_DIAS})",
-   st_final is not None and st_final['dia_negociacion'] == N_DIAS,
-   st_final['dia_negociacion'] if st_final is not None else None)
-ok("degradado se quedó fijado en True desde el primer día, durante TODO el resto del "
-   "bucle -- se calcula y se guarda bien", st_final['degradado'] is True, st_final['degradado'])
-ok("dia_degradacion sigue siendo el día 1 -- el bucle real, no solo procesa_dia() aislado, "
-   "confirma el mismo comportamiento sticky", st_final['dia_degradacion'] == 1,
-   st_final['dia_degradacion'])
-ok(f"CONFIRMADO -- HALLAZGO PINEADO: nivel.json se queda en N0 durante los {N_DIAS} días, "
-   f"pese a degradado=True desde el día 1 -- bot/bucle_del_dia.py SOLO detiene el bucle "
-   f"si seguridad.nivel_actual() != 'N0', y NADA en bot/ escala ese nivel por causa de la "
-   f"degradación (grep confirmado antes de escribir este test). El circuito, HOY, NO para "
-   f"de verdad por degradación -- solo lo pinta el panel (bot/contexto_dashboard.py, "
-   f"bot/dashboard.py). Cablear una parada real es una decisión del operador (R2/R6), no "
-   f"de esta sesión -- si algún día se cablea, este assert debe empezar a fallar.",
-   SEG.nivel_actual(ruta_nivel) == 'N0', SEG.nivel_actual(ruta_nivel))
+# "algo pasa" entre el día 1 y el día 2 -- se fuerza la caja por debajo del
+# muro directamente sobre el estado.json persistido (mismo principio que
+# §5.3: el arnés fabrica la PRE-CONDICIÓN, nunca el resultado).
+st_forzado = E.cargar(RUTA_ESTADO)
+st_forzado['caja'] = -(MURO_REF + 500.0)
+E.guardar(st_forzado, RUTA_ESTADO)
+
+st_d2 = _corre_un_dia(RUTA_ESTADO, RUTA_NIVEL, DIR, semilla=2)
+ok("día 2 (cruza): degradado se fija a True", st_d2['degradado'] is True, st_d2['degradado'])
+ok("día 2 (cruza): dia_degradacion == 2 (el día EXACTO, no el 1)",
+   st_d2['dia_degradacion'] == 2, st_d2['dia_degradacion'])
+ok("día 2 (cruza): el nivel sube a N3 ESE MISMO día -- no un día tarde, no un día pronto",
+   SEG.nivel_actual(RUTA_NIVEL) == 'N3', SEG.nivel_actual(RUTA_NIVEL))
+ultima = SEG.lee_nivel(RUTA_NIVEL)['historial'][-1]
+ok("la transición queda con causa='degradacion_tesoreria' (no un motivo de texto libre "
+   "sin tipar)", ultima['causa'] == 'degradacion_tesoreria', ultima)
+
+# =============================================================================
+# 4. INVERTIDO (test 1): con degradado=True Y nivel YA en N3 (persistido de
+#    una corrida anterior -- "no reanuda aunque lo reinicien"), una NUEVA
+#    invocación de bucle_del_dia() no procesa NINGÚN día -- el chequeo de
+#    entrada del bucle (nivel_actual() != 'N0': break) actúa ANTES de tocar
+#    ningún día nuevo.
+# =============================================================================
+print("\n=== 4. invertido: con degradado=True y nivel ya en N3, una nueva invocación "
+      "no procesa NINGÚN día ===")
+dia_negociacion_antes = st_d2['dia_negociacion']
+st_d3 = _corre_un_dia(RUTA_ESTADO, RUTA_NIVEL, DIR, semilla=3)
+ok("bucle_del_dia() devuelve el ESTADO SIN CAMBIAR -- dia_negociacion sigue igual "
+   "que antes de esta invocación (0 días nuevos procesados)",
+   st_d3 is not None and st_d3['dia_negociacion'] == dia_negociacion_antes,
+   (st_d3['dia_negociacion'] if st_d3 is not None else None, dia_negociacion_antes))
+ok("nivel sigue en N3 (no se tocó)", SEG.nivel_actual(RUTA_NIVEL) == 'N3')
+
+# =============================================================================
+# 5. LO QUE IMPORTA (test 3): un humano baja el nivel a N0 a mano, con
+#    degradado TODAVÍA True -> al día SIGUIENTE el bot vuelve a subir a N3
+#    solo, sin que nadie se lo pida. Si esto no pasa, la barrera es
+#    decorativa (palabras del operador).
+# =============================================================================
+print("\n=== 5. lo que importa: humano baja a N0 a mano, degradado sigue True -> "
+      "el bot vuelve a subir a N3 SOLO al día siguiente ===")
+SEG.baja_humana(RUTA_NIVEL, 'N0', quien='operador_martitomas7',
+                 motivo='revisión manual -- comprobando si la barrera es de verdad')
+ok("(fabricado) el humano consigue bajar a N0", SEG.nivel_actual(RUTA_NIVEL) == 'N0')
+ok("(control) degradado SIGUE True en el estado persistido -- el humano NO lo tocó",
+   E.cargar(RUTA_ESTADO)['degradado'] is True, E.cargar(RUTA_ESTADO)['degradado'])
+
+st_d4 = _corre_un_dia(RUTA_ESTADO, RUTA_NIVEL, DIR, semilla=4)
+ok("el bot SÍ procesa este día (partía de N0, el humano lo autorizó)",
+   st_d4 is not None and st_d4['dia_negociacion'] == dia_negociacion_antes + 1,
+   st_d4['dia_negociacion'] if st_d4 is not None else None)
+ok("pero AL CIERRE de ese mismo día, con degradado todavía True, el bot vuelve a "
+   "subir a N3 ÉL SOLO -- sin que nadie se lo pida (si esto no pasa, la barrera es "
+   "decorativa)", SEG.nivel_actual(RUTA_NIVEL) == 'N3', SEG.nivel_actual(RUTA_NIVEL))
+ultima_2 = SEG.lee_nivel(RUTA_NIVEL)['historial'][-1]
+ok("la re-subida también queda tipada con causa='degradacion_tesoreria'",
+   ultima_2['causa'] == 'degradacion_tesoreria' and ultima_2['de'] == 'N0', ultima_2)
+
+# =============================================================================
+# 6. REPOSICIÓN (test 4): degradado borrado + caja por encima del muro +
+#    humano baja a N0 -> reanuda limpio, ya no vuelve a subir.
+# =============================================================================
+print("\n=== 6. reposición: degradado borrado + caja repuesta + humano baja a N0 -> "
+      "reanuda limpio ===")
+st_reponer = E.cargar(RUTA_ESTADO)
+st_reponer['degradado'] = False
+st_reponer['dia_degradacion'] = None
+st_reponer['caja'] = -(MURO_REF - 2000.0)   # bien por encima del muro, sano de nuevo
+E.guardar(st_reponer, RUTA_ESTADO)
+SEG.baja_humana(RUTA_NIVEL, 'N0', quien='operador_martitomas7',
+                 motivo='capital repuesto -- caja por encima del muro, degradado borrado')
+ok("(fabricado) reposición: degradado=False, caja sana, nivel=N0",
+   not E.cargar(RUTA_ESTADO)['degradado'] and SEG.nivel_actual(RUTA_NIVEL) == 'N0')
+
+dia_antes_reposicion = E.cargar(RUTA_ESTADO)['dia_negociacion']
+st_d5 = _corre_un_dia(RUTA_ESTADO, RUTA_NIVEL, DIR, semilla=5)
+ok("tras la reposición, el bot procesa el día con normalidad",
+   st_d5 is not None and st_d5['dia_negociacion'] == dia_antes_reposicion + 1,
+   st_d5['dia_negociacion'] if st_d5 is not None else None)
+ok("degradado se queda en False -- no vuelve a activarse por sí solo",
+   st_d5['degradado'] is False, st_d5['degradado'])
+ok("el nivel se queda en N0 -- la reposición fue limpia, no re-escala",
+   SEG.nivel_actual(RUTA_NIVEL) == 'N0', SEG.nivel_actual(RUTA_NIVEL))
 
 shutil.rmtree(DIR, ignore_errors=True)
+
+# =============================================================================
+# 7. LA CAUSA TIPADA LLEGA AL PANEL Y SE PINTA (test 5)
+# =============================================================================
+print("\n=== 7. la causa tipada llega al panel (contexto_dashboard.py) y se pinta "
+      "(dashboard.py) ===")
+DIR2 = "/tmp/prueba_degradacion_panel"
+shutil.rmtree(DIR2, ignore_errors=True)
+os.makedirs(DIR2)
+ruta_nivel_panel = os.path.join(DIR2, "nivel.json")
+SEG.reacciona_a_degradacion_tesoreria(ruta_nivel_panel, dia_negociacion=7, dia_degradacion=5)
+
+st_panel = E.nuevo('v10', checksum)
+st_panel['degradado'] = True
+st_panel['dia_degradacion'] = 5
+nivel_registro = SEG.lee_nivel(ruta_nivel_panel)
+ctx = CD.construye(st_panel, None, [], ahora_iso='2026-08-21T00:00:00Z',
+                    nivel_registro=nivel_registro)
+ok("ctx['ahora']['contencion']['nivel'] == 'N3'",
+   ctx['ahora']['contencion']['nivel'] == 'N3', ctx['ahora']['contencion'])
+ok("ctx['ahora']['contencion']['causa'] == 'degradacion_tesoreria' -- la causa TIPADA, "
+   "no solo el motivo de texto libre, llega hasta el contexto del panel",
+   ctx['ahora']['contencion']['causa'] == 'degradacion_tesoreria', ctx['ahora']['contencion'])
+ok("el semáforo global del panel es 'critico' -- ahora refleja el NIVEL de verdad, no "
+   "solo 'degradado' a secas (DECISION_DEGRADACION_N3.md §3: una sola escalera)",
+   ctx['ahora']['semaforo_global'] == 'critico', ctx['ahora']['semaforo_global'])
+
+html = DASH.genera_html(ctx)
+ok("el HTML generado SÍ pinta la causa tipada ('degradacion_tesoreria' aparece en el "
+   "HTML, no solo en el ctx)", 'degradacion_tesoreria' in html)
+ok("el HTML generado SÍ pinta el nivel N3", 'N3' in html and 'KILL' in html)
+shutil.rmtree(DIR2, ignore_errors=True)
 
 print("\n" + "=" * 70)
 n_ok = sum(1 for _, c in resultados if c)

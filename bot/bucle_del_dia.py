@@ -171,6 +171,21 @@ def bucle_del_dia(fuente_barras, adaptador,
                 resuelve_dia_eval=resuelve_eval, resuelve_dia_funded=resuelve_funded,
                 modo_auto_confirma=modo_auto_confirma, resuelve_concurrente=resuelve_concurrente)
 
+            # DECISION_DEGRADACION_N3.md (revisión operador 21-08-2026): la
+            # degradación (R-7.2) es pegajosa -- nunca se revierte sola -- así
+            # que la única salida real es PARAR (N3, "humano, explícito").
+            # Evaluada CADA día (no solo el día del cruce): `sube_a()` es
+            # monótono/idempotente, así que si un humano bajase el nivel a
+            # mano con `degradado` todavía `True`, el bucle vuelve a subirlo
+            # a N3 solo, al día siguiente -- sin esto la barrera sería
+            # decorativa. Va DESPUÉS del bloque de tesorería (que ya corrió,
+            # dentro de `procesa_dia()`) -- el día de hoy ya está cerrado y
+            # el bot ya está PLANO; la única decisión real es si abre mañana
+            # (la comprueba el `while` de arriba, en la vuelta siguiente).
+            if st['degradado']:
+                SEG.reacciona_a_degradacion_tesoreria(ruta_nivel, st['dia_negociacion'],
+                                                       st['dia_degradacion'])
+
             _, checksum_actual = config.cargar()
             fallos = estado.validar(st, checksum_actual)
             if fallos:
