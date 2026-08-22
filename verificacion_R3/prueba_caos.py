@@ -8,17 +8,20 @@ detrás de otro, en una sola corrida continua del bucle real de
 producción -- para cazar el tipo de bug que solo aparece cuando un fallo
 deja el sistema en un estado que el SIGUIENTE fallo no esperaba.
 
-Investigación previa (R1/R3, antes de fabricar nada): ORDEN_DE_TRABAJO_D8.md
-§5 documenta un hueco YA CONOCIDO (no nuevo, no cazado por esta sesión):
+Investigación previa (R1/R3, antes de fabricar nada): la primera versión de
+esta prueba documentaba un hueco YA CONOCIDO (`ORDEN_DE_TRABAJO_D8.md §5`):
 "N1/N2 se desescalan solos... 'cuándo exactamente' no está grounded en
-este diseño" -- es decir, `bot/seguridad.py::baja_automatica()` EXISTE y
-está probada (`prueba_seguridad_n0_n4.py`), pero NADA en `bot/` la llama
-todavía (a diferencia de N3/N4, que exigen `baja_humana()` por norma, N1/
-N2 exigen un descenso automático que hoy nadie dispara). Esta prueba NO
-inventa ese cableado -- simula, explícitamente, el papel de ese mecanismo
-todavía sin construir (un comentario en el propio código lo marca en
-cada paso) llamando a la función YA EXISTENTE entre invocaciones, tal
-como lo haría un futuro script de orquestación diaria.
+este diseño" -- `bot/seguridad.py::baja_automatica()` EXISTÍA y estaba
+probada (`prueba_seguridad_n0_n4.py`), pero NADA en `bot/` la llamaba
+todavía, así que esta prueba SIMULABA el papel de ese mecanismo. **Ese
+hueco ya está cerrado** (`ORDEN_DE_TRABAJO_D9.md §3.1`:
+`bot/seguridad.py::intenta_bajar_automatico()` + guardia diaria en
+`bot/bucle_del_dia.py`, verificando la causa 'reconciliacion' con
+`bot/reconciliacion.py::verifica_reconciliado()`, de solo lectura) -- las
+llamadas manuales que aquí simulaban el auto-descenso de N1/N2 se
+sustituyeron por el mecanismo REAL: la siguiente invocación de
+`bucle_del_dia()` desciende sola (y procesa el día, en la MISMA llamada,
+si la causa ya no aplica) sin que este arnés tenga que empujarla.
 
 Encadena, en una sola corrida de N días (bot/bucle_del_dia.py, invocado
 un día a la vez -- como se invocaría en producción, leyendo/escribiendo
@@ -26,10 +29,13 @@ estado.json/nivel.json/diario.jsonl entre invocaciones):
 
   1. una muerte real de eval por precio (D8.2/D8.5, misma receta que
      prueba_sorteo_direccion_contra.py) -> CONTRA se arma;
-  2. una liquidación forzosa real (D8.3) -> N2 -> auto-descenso simulado
-     -> el bucle resume;
+  2. una liquidación forzosa real (D8.3) -> N2 -> auto-descenso REAL (al
+     día siguiente) -> el bucle resume solo;
   3. una reacción de conexión caída (simulando el monitor todavía sin
-     construir) -> N1 -> auto-descenso simulado -> el bucle resume;
+     construir -- el ÚNICO trozo que sigue fabricado a mano, porque el
+     adaptador NT8 real es §7, fuera de esta orden) -> N1 -> auto-descenso
+     REAL (al desaparecer la causa, sin esperar al día siguiente) -> el
+     bucle resume solo;
   4. una palanca de Clase B (`contra` apagada por el operador) activa
      DURANTE el resto de la corrida, sin que nada de lo anterior la rompa;
   5. una degradación real de tesorería -> N3 -> el bucle NO resume solo;
@@ -189,46 +195,46 @@ try:
     ok("CONTRA se rearmó (hubo muerte hoy, por la liquidación)",
        st2['contra_pendiente'] > 0, st2['contra_pendiente'])
 
-    print("\n=== 3. día 3: bloqueado por N2 (0 días nuevos) hasta el auto-descenso ===")
+    print("\n=== 3. día 3: N2 desciende SOLA al día siguiente (mecanismo real, D9 §3.1) ===")
+    # Ya NO hace falta bloquear un día "sin auto-descenso": el mismo día 2 que
+    # fija N2 deja registrado dia_negociacion=2 en el historial (reconciliacion
+    # ya está limpia -- la liquidación se resolvió ese mismo día), así que la
+    # SIGUIENTE invocación de bucle_del_dia() (día 3 > día 2 fijado, causa
+    # 'reconciliacion' ya no activa) desciende sola Y procesa el día, en una
+    # sola llamada -- exactamente el comportamiento real que sustituye a la
+    # simulación anterior.
     dia_antes_3 = st2['dia_negociacion']
-    st3_bloqueado, _ = _corre_dia(_camino_plano(), semilla=3)
-    ok("SIN auto-descenso, el bucle NO procesa ningún día nuevo (nivel != N0)",
-       st3_bloqueado is not None and st3_bloqueado['dia_negociacion'] == dia_antes_3,
-       st3_bloqueado['dia_negociacion'] if st3_bloqueado else None)
-
-    # simula el auto-descenso "al día siguiente" que N2 promete por norma pero que
-    # NINGÚN código de bot/ dispara todavía (hueco YA documentado en
-    # ORDEN_DE_TRABAJO_D8.md §5 -- no inventado aquí, solo simulado con la función
-    # YA EXISTENTE y YA probada).
-    SEG.baja_automatica(RUTA_NIVEL, 'N0',
-                        motivo='(simulado) auto-descenso N2->N0 al día siguiente -- '
-                               'mecanismo aún sin construir, ver ORDEN_DE_TRABAJO_D8.md §5')
     st3, _ = _corre_dia(_camino_plano(), semilla=3)
-    ok("tras el auto-descenso simulado, el bucle SÍ procesa el día",
+    ok("el bucle desciende SOLO de N2 y procesa el día 3 en la misma llamada",
        st3 is not None and st3['dia_negociacion'] == dia_antes_3 + 1,
        st3['dia_negociacion'] if st3 else None)
     ok("día 3: sin fallos de invariantes", len(E.validar(st3, checksum)) == 0,
        E.validar(st3, checksum))
     ok("nivel de vuelta en N0", SEG.nivel_actual(RUTA_NIVEL) == 'N0')
+    ultima_bajada_n2 = [h for h in SEG.lee_nivel(RUTA_NIVEL)['historial']
+                        if h['de'] == 'N2' and h['a'] == 'N0'][-1]
+    ok("la bajada N2->N0 quedó registrada quien='sistema' (automática, no un humano)",
+       ultima_bajada_n2['quien'] == 'sistema', ultima_bajada_n2)
 
-    print("\n=== 4. día 4: reacción de CONEXIÓN CAÍDA (simulada, mismo hueco) -> N1 ===")
+    print("\n=== 4. día 4: reacción de CONEXIÓN CAÍDA (simulada -- el adaptador NT8 real "
+          "es §7, fuera de esta orden) -> N1 -> desciende SOLA sin esperar al día "
+          "siguiente ===")
     SEG.sube_a(RUTA_NIVEL, 'N1',
                motivo='(simulado) conexión caída, posición ya protegida por órdenes en '
-                      'reposo -- monitor de conexión aún sin construir',
-               causa='reconciliacion')
+                      'reposo -- monitor de conexión aún sin construir (adaptador NT8 real, §7)',
+               causa='reconciliacion', dia_negociacion=st3['dia_negociacion'])
     ok("nivel sube a N1", SEG.nivel_actual(RUTA_NIVEL) == 'N1')
     dia_antes_4 = st3['dia_negociacion']
-    st4_bloqueado, _ = _corre_dia(_camino_plano(), semilla=4)
-    ok("bloqueado por N1 -- 0 días nuevos", st4_bloqueado is not None
-       and st4_bloqueado['dia_negociacion'] == dia_antes_4,
-       st4_bloqueado['dia_negociacion'] if st4_bloqueado else None)
-    SEG.baja_automatica(RUTA_NIVEL, 'N0',
-                        motivo='(simulado) auto-descenso N1->N0 al desaparecer la causa')
     st4, _ = _corre_dia(_camino_plano(), semilla=4)
-    ok("tras el auto-descenso, el bucle procesa el día 4",
+    ok("N1 desciende SOLA (al desaparecer la causa, sin esperar 'al día siguiente' como N2) "
+       "y el bucle procesa el día 4 en la misma llamada",
        st4 is not None and st4['dia_negociacion'] == dia_antes_4 + 1,
        st4['dia_negociacion'] if st4 else None)
     ok("día 4: sin fallos de invariantes", len(E.validar(st4, checksum)) == 0)
+    ultima_bajada_n1 = [h for h in SEG.lee_nivel(RUTA_NIVEL)['historial']
+                        if h['de'] == 'N1' and h['a'] == 'N0'][-1]
+    ok("la bajada N1->N0 quedó registrada quien='sistema' (automática, no un humano)",
+       ultima_bajada_n1['quien'] == 'sistema', ultima_bajada_n1)
 
     print("\n=== 5. día 5: palanca de Clase B ('contra' apagada por el operador) activa "
           "para el resto de la corrida -- ¿sobrevive al caos anterior? ===")

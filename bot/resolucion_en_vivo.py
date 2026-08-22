@@ -211,7 +211,8 @@ class ResuelveDiaEnVivo:
                 r = deteccion_liquidacion.resuelve_liquidacion_forzosa(
                     self.adaptador, self.cuenta_hedge, MES, eventos=self.eventos,
                     reloj=self.reloj, dormir=self.dormir)
-                SEG.reacciona_a_liquidacion_forzosa(self.ruta_nivel, detalle=str(r))
+                SEG.reacciona_a_liquidacion_forzosa(self.ruta_nivel, detalle=str(r),
+                                                     dia_negociacion=self.dia_negociacion)
                 self._intento += 1
                 return dict(dx_puntos=0.0, hedge_dolares=0.0, comision=plan_resultado['comision'],
                             muere=True, pausa=False, objetivo=False, barra_evento=barra_actual)
@@ -484,7 +485,8 @@ class MaquinaEnVivo:
             r = deteccion_liquidacion.resuelve_liquidacion_forzosa(
                 self.adaptador, self.cuenta_hedge, self._MES, eventos=self.eventos,
                 reloj=self.reloj, dormir=self.dormir)
-            SEG.reacciona_a_liquidacion_forzosa(self.ruta_nivel, detalle=str(r))
+            SEG.reacciona_a_liquidacion_forzosa(self.ruta_nivel, detalle=str(r),
+                                                 dia_negociacion=self.dia_negociacion)
             self.estado = 'RESUELTO'
             self.resultado = dict(dx_puntos=0.0, hedge_dolares=0.0, comision=self._plan['comision'],
                                    muere=True, pausa=False, objetivo=False,

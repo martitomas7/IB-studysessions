@@ -90,11 +90,35 @@ def bucle_del_dia(fuente_barras, adaptador,
         cfg = config.obtener()
 
         while fuente_barras.dia_disponible():
+            # ORDEN_DE_TRABAJO_D9.md §3.1 -- el hueco que el comentario de
+            # abajo documentaba ("cuándo exactamente" no estaba grounded)
+            # ya está cerrado: si el nivel es N1/N2, se intenta la bajada
+            # automática ANTES de decidir si el bucle sigue, para que un
+            # "sí, ya bajó" permita procesar el día de hoy en la MISMA
+            # vuelta, en vez de esperar a la siguiente invocación del
+            # proceso. `verifica_reconciliado()` es de solo lectura --
+            # nunca cierra nada, nunca sube de nivel; el único causante
+            # que hoy escala a N1/N2 es 'reconciliacion' (ver
+            # bot/seguridad.py::CAUSAS/reacciona_a_desconocido/
+            # reacciona_a_liquidacion_forzosa) -- cualquier otra causa que
+            # algún día llegue aquí (hoy ninguna) se trata como "no se
+            # puede verificar" y nunca baja sola, la misma cautela que
+            # 10_SEGURIDAD.md exige ante la duda.
+            if SEG.nivel_actual(ruta_nivel) in ('N1', 'N2'):
+                historial_nivel = SEG.lee_nivel(ruta_nivel).get('historial', [])
+                causa_activa = historial_nivel[-1].get('causa') if historial_nivel else None
+                if causa_activa == 'reconciliacion':
+                    causa_sigue_activa = not reconciliacion.verifica_reconciliado(
+                        adaptador, st, cuenta_hedge_eval, cuenta_prop_eval,
+                        cuenta_hedge_funded, cuenta_prop_funded, instrumento_prop)
+                else:
+                    causa_sigue_activa = None
+                SEG.intenta_bajar_automatico(ruta_nivel, st['dia_negociacion'] + 1, causa_sigue_activa)
+
             if SEG.nivel_actual(ruta_nivel) != 'N0':
-                # cualquier nivel de degradación detiene el bucle -- N1/N2 se
-                # desescalan solos en otro punto (seguridad.baja_automatica,
-                # ver ORDEN_DE_TRABAJO_D8.md §5, hueco documentado: "cuándo
-                # exactamente" no está grounded en este diseño); N3/N4 solo
+                # cualquier nivel que siga vigente tras el intento de arriba
+                # detiene el bucle -- N3/N4 nunca llegan a intentarlo
+                # (intenta_bajar_automatico es no-op fuera de N1/N2), solo
                 # con un humano.
                 break
 

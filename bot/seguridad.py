@@ -163,7 +163,7 @@ def nivel_actual(ruta):
     return lee_nivel(ruta)['nivel']
 
 
-def sube_a(ruta, nivel_nuevo, motivo, causa):
+def sube_a(ruta, nivel_nuevo, motivo, causa, dia_negociacion=None):
     """§3: "el sistema sube solo" -- NUNCA exige autorización humana. Si
     `nivel_nuevo` no es más severo que el nivel ya alcanzado, no hace
     nada -- subir nunca reduce ni reescribe un nivel ya vigente (un fallo
@@ -177,7 +177,15 @@ def sube_a(ruta, nivel_nuevo, motivo, causa):
     en la práctica: llamar de nuevo con la MISMA causa/nivel, ya vigente o
     menos severo, no hace nada (la monotonía de arriba ya lo cubre) -- así
     una guarda puede llamarse todos los días sin comprobar antes el nivel
-    actual (DECISION_DEGRADACION_N3.md §5, test #3: "evaluada cada día")."""
+    actual (DECISION_DEGRADACION_N3.md §5, test #3: "evaluada cada día").
+
+    `dia_negociacion` (ORDEN_DE_TRABAJO_D9.md §3.1, opcional -- SOLO N1/N2
+    lo necesitan hoy, ninguna otra causa desciende sola): el día en que se
+    fijó ESTA transición, para que `intenta_bajar_automatico()` pueda
+    aplicar "N2 baja al día siguiente, no el mismo" sin parsear el texto
+    libre de `motivo`. `None` para las causas que nunca bajan solas
+    (N3/N4) -- no hace falta ensuciar su historial con un dato que nadie
+    va a leer."""
     if nivel_nuevo not in NIVELES:
         raise NivelInvalidoError(f"nivel desconocido: {nivel_nuevo!r}")
     if causa not in CAUSAS:
@@ -187,7 +195,8 @@ def sube_a(ruta, nivel_nuevo, motivo, causa):
     if _RANGO[nivel_nuevo] > _RANGO[actual]:
         registro['nivel'] = nivel_nuevo
         registro.setdefault('historial', []).append(
-            dict(de=actual, a=nivel_nuevo, motivo=motivo, causa=causa, quien='sistema'))
+            dict(de=actual, a=nivel_nuevo, motivo=motivo, causa=causa, quien='sistema',
+                 dia_negociacion=dia_negociacion))
         _guarda_nivel(registro, ruta)
         return nivel_nuevo
     return actual
@@ -247,6 +256,51 @@ def baja_humana(ruta, nivel_nuevo, quien, motivo):
     return nivel_nuevo
 
 
+def intenta_bajar_automatico(ruta, dia_negociacion, causa_sigue_activa):
+    """ORDEN_DE_TRABAJO_D9.md §3.1 -- la guardia diaria que cierra el hueco
+    documentado en `bucle_del_dia.py` ("N1/N2 se desescalan solos en otro
+    punto... 'cuándo exactamente' no está grounded en este diseño"): mismo
+    patrón que `reacciona_a_degradacion_tesoreria()` -- se llama TODOS los
+    días, sin comprobar antes el nivel actual (no-op si no hay nada que
+    bajar), y usa `baja_automatica()` sin reimplementar sus barreras
+    (N3/N4 siguen prohibidos ahí, esta función ni lo intenta).
+
+    `causa_sigue_activa`: **tri-estado**, calculado por quien llama
+    volviendo a correr el MISMO clasificador que disparó la subida (nunca
+    un detector nuevo -- "semántica ya escrita, no la inventes"):
+    - `False` -- la causa ya no se observa. N1 baja YA ("al desaparecer
+      la causa"); N2 baja SOLO si `dia_negociacion` es POSTERIOR al día en
+      que `sube_a()` la fijó ("al día siguiente, no el mismo").
+    - `True` -- la causa sigue presente. Nunca baja, sea cual sea el día
+      (test del operador: "N2 con la causa presente -> no baja").
+    - `None` -- no se pudo verificar (equivalente a DESCONOCIDO otra vez).
+      Nunca baja -- "ante la duda, no se resume" es la misma norma que
+      "ante la duda, se aplana" mirada desde el lado de bajar (test del
+      operador: "N1 por UNKNOWN -> no baja nunca").
+
+    Devuelve el nivel final (bajado o el que ya había)."""
+    registro = lee_nivel(ruta)
+    actual = registro.get('nivel', 'N0')
+    if actual not in ('N1', 'N2'):
+        return actual   # N0: nada que bajar. N3/N4: baja_automatica() los rechaza; ni lo intentamos.
+    if causa_sigue_activa is None or causa_sigue_activa:
+        return actual
+    historial = registro.get('historial', [])
+    ultimo = historial[-1] if historial else {}
+    causa = ultimo.get('causa')
+    if actual == 'N1':
+        return baja_automatica(ruta, 'N0', motivo=f"causa desaparecida (causa={causa})")
+    # N2: "al día siguiente" -- dia_fijado ausente (registro antiguo, sin
+    # dia_negociacion) se trata como "no se sabe cuándo", nunca como "ya
+    # pasó un día" -- la misma cautela que el resto de esta función.
+    dia_fijado = ultimo.get('dia_negociacion')
+    if dia_fijado is not None and dia_negociacion > dia_fijado:
+        return baja_automatica(ruta, 'N0',
+                                motivo=f"día siguiente ({dia_fijado} -> {dia_negociacion}), "
+                                       f"causa desaparecida (causa={causa})")
+    return actual
+
+
 # --- reacciones cableadas del catálogo (10_SEGURIDAD.md §4) --------------
 # Cada una traduce un hecho YA detectado por su propio módulo (estado.py,
 # deteccion_liquidacion.py) al nivel que le corresponde -- ninguna decide
@@ -262,11 +316,16 @@ def reacciona_a_estado_invalido(ruta_nivel, detalle):
     return sube_a(ruta_nivel, 'N4', motivo=f"estado.json inválido: {detalle}", causa='estado_corrupto')
 
 
-def reacciona_a_liquidacion_forzosa(ruta_nivel, detalle):
+def reacciona_a_liquidacion_forzosa(ruta_nivel, detalle, dia_negociacion):
     """§4.B/D8.3: el proveedor liquidó la prop por su cuenta -> el hedge se
     cierra (ya lo hace `deteccion_liquidacion.resuelve_liquidacion_forzosa`)
-    y el nivel sube a N2 ("plano y parado hoy")."""
-    return sube_a(ruta_nivel, 'N2', motivo=f"liquidación forzosa: {detalle}", causa='reconciliacion')
+    y el nivel sube a N2 ("plano y parado hoy").
+
+    `dia_negociacion` obligatorio desde ORDEN_DE_TRABAJO_D9.md §3.1: N2 es
+    uno de los dos niveles que bajan solos, y necesita saber desde qué día
+    quedó fijado para aplicar "al día siguiente, no el mismo"."""
+    return sube_a(ruta_nivel, 'N2', motivo=f"liquidación forzosa: {detalle}", causa='reconciliacion',
+                  dia_negociacion=dia_negociacion)
 
 
 def reacciona_a_presupuesto_reinicios_agotado(ruta_nivel, detalle):
@@ -283,12 +342,16 @@ def reacciona_a_presupuesto_reinicios_agotado(ruta_nivel, detalle):
                   causa='presupuesto_reinicios')
 
 
-def reacciona_a_desconocido(ruta_nivel, detalle):
+def reacciona_a_desconocido(ruta_nivel, detalle, dia_negociacion):
     """§2: DESCONOCIDO fuerza a PLANO (aplanar las dos, confirmando cada
     una -- responsabilidad de quien llama) y sube a N2 ("parar hasta
     intervención humana", que aquí empieza por no reabrir hoy; si la
-    causa persiste al día siguiente, quien llama puede volver a subir)."""
-    return sube_a(ruta_nivel, 'N2', motivo=f"estado DESCONOCIDO: {detalle}", causa='reconciliacion')
+    causa persiste al día siguiente, quien llama puede volver a subir).
+
+    `dia_negociacion` obligatorio, mismo motivo que en
+    `reacciona_a_liquidacion_forzosa`."""
+    return sube_a(ruta_nivel, 'N2', motivo=f"estado DESCONOCIDO: {detalle}", causa='reconciliacion',
+                  dia_negociacion=dia_negociacion)
 
 
 def reacciona_a_violacion_tamanos(ruta_nivel, detalle):

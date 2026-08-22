@@ -201,7 +201,7 @@ oid_hedge = a.abrir("CTA-HEDGE", "MES", -1, 4); a.leer_estado_orden(oid_hedge)
 a.fuerza_posicion_externa("CTA-PROP", "MES", 0)
 if detecta_liquidacion_forzosa(a, "CTA-PROP", "MES", cantidad_esperada=10, ordenes_propias_conocidas=[]):
     r = resuelve_liquidacion_forzosa(a, "CTA-HEDGE", "MES")
-    S.reacciona_a_liquidacion_forzosa(RUTA_NIVEL, "detectada en R3")
+    S.reacciona_a_liquidacion_forzosa(RUTA_NIVEL, "detectada en R3", dia_negociacion=1)
 ok("tras la liquidación forzosa detectada y resuelta, el nivel sube a N2",
    S.nivel_actual(RUTA_NIVEL) == 'N2')
 

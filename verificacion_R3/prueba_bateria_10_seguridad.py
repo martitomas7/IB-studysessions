@@ -46,7 +46,7 @@ clasif_1 = S.clasifica_posicion(cantidad_hedge=-4, cantidad_prop=0, m_esperado=4
 conoc_1 = S.clasifica_conocimiento(hedge_legible=True, prop_legible=True, estado_posicion=clasif_1)
 ok("hedge desnudo tras reinicio (prop=0, hedge=-4) se clasifica CONOCIDO-INSEGURO",
    conoc_1 == 'CONOCIDO-INSEGURO', (clasif_1, conoc_1))
-S.reacciona_a_desconocido(RUTA_NIVEL, "hedge desnudo tras reinicio (prueba #1)") \
+S.reacciona_a_desconocido(RUTA_NIVEL, "hedge desnudo tras reinicio (prueba #1)", dia_negociacion=1) \
     if conoc_1 == 'DESCONOCIDO' else S.sube_a(RUTA_NIVEL, 'N2', "hedge desnudo tras reinicio (prueba #1)",
                                                causa='posicion_descuadrada')
 ok("la reacción deja el nivel en N2 ('plano y parado hoy', tras aplanar el hedge)",
@@ -62,7 +62,7 @@ clasif_2 = S.clasifica_conocimiento(hedge_legible=True, prop_legible=False,   # 
                                      estado_posicion=None)
 ok("posición prop no legible con certeza durante un fill parcial -> DESCONOCIDO",
    clasif_2 == 'DESCONOCIDO', clasif_2)
-S.reacciona_a_desconocido(RUTA_NIVEL, "fill parcial que nunca completa (prueba #2)")
+S.reacciona_a_desconocido(RUTA_NIVEL, "fill parcial que nunca completa (prueba #2)", dia_negociacion=1)
 ok("DESCONOCIDO reacciona subiendo a N2 (fuerza a PLANO, para hasta intervención)",
    S.nivel_actual(RUTA_NIVEL) == 'N2')
 
