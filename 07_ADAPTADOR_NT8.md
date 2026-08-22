@@ -89,7 +89,15 @@ porque en un simulador en memoria esa distinción no existe. El adaptador NT8 re
 deberá cumplir el mismo contrato; si a él le falta algún campo será por una razón distinta (p.ej. la
 ATI no expone el timestamp propio del feed) y deberá documentar su propio motivo, nunca reusar el de
 `AdaptadorFalso`. El agregador del residuo debe **negarse** a calcular latencia/deslizamiento con
-campos `None` — igual que ya se niega a calcular `spr_usd` con registros `NO_VALIDA` (D9 §3.3).
+campos `None` — igual que debe negarse a calcular `spr_usd` con registros `NO_VALIDA` (D9 §3.3).
+
+> **PENDIENTE (anotado 22-08-2026, `DECISION_CREDENCIALES_Y_FASE.md` punto 5).** La frase anterior
+> describe el comportamiento que D9 §3.3 exige, no uno que exista ya: hoy no hay ningún agregador que
+> rechace `spr_usd`/latencia/deslizamiento por `NO_VALIDA` ni por campos `None` — `papel_feed_retrasado`
+> y el marcado `NO_VALIDA` por registro tampoco existen todavía en `bot/`. Este párrafo queda como
+> especificación a cumplir cuando D9 §3.3 construya ese agregador, no como descripción de código
+> presente. No tocar hasta entonces (R1: la especificación gobierna, pero no se anticipa código que
+> aún no se ha autorizado a construir).
 
 > **El instrumento es MES en las DOS patas, sin excepción — escríbelo explícito, no lo dejes
 > abstracto.** La norma calcula `pv = 5·k` (R-2.5) y `03_CONFIG.yaml → hedge_broker.valor_punto_usd`

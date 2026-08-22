@@ -143,7 +143,7 @@ try:
         ruta_estado=RUTA_ESTADO, ruta_nivel=RUTA_NIVEL,
         ruta_ordenes=os.path.join(DIR, "ordenes"), ruta_lock=os.path.join(DIR, "bot.lock"),
         dir_instantaneas=os.path.join(DIR, "instantaneas"), dias_retenidos=5,
-        ruta_diario=RUTA_DIARIO, rng=random.Random(20260821), dormir=lambda s: None)
+        ruta_diario=RUTA_DIARIO, fase='plena', rng=random.Random(20260821), dormir=lambda s: None)
 finally:
     calendario.ventana_del_dia = _orig_ventana
 
@@ -193,7 +193,7 @@ st_final2 = BDD.bucle_del_dia(
     ruta_estado=RUTA_ESTADO, ruta_nivel=RUTA_NIVEL,
     ruta_ordenes=os.path.join(DIR, "ordenes"), ruta_lock=os.path.join(DIR, "bot.lock"),
     dir_instantaneas=os.path.join(DIR, "instantaneas"), dias_retenidos=5,
-    ruta_diario=RUTA_DIARIO, rng=random.Random(1), dormir=lambda s: None)
+    ruta_diario=RUTA_DIARIO, fase='plena', rng=random.Random(1), dormir=lambda s: None)
 ok("el día extra se procesó y degradó de verdad", st_final2['degradado'] is True,
    st_final2['degradado'])
 ok("el nivel subió a N3 de verdad, cableado por bot/bucle_del_dia.py",

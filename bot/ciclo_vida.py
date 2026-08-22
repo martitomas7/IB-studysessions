@@ -43,16 +43,28 @@ def coste_diario_pool():
     return pool_subs * cuota / dias_facturacion
 
 
-def toma_sub(pool_frescas, pool_rotas, estado, dia_actual):
+def toma_sub(pool_frescas, pool_rotas, estado, dia_actual, emergencia_forzada=None):
     """R-4.1 (toma fresca) y R-4.5 (emergencia). Pipeline3.py:188-198 `toma()`.
     `estado`/`dia_actual`: para `valor_efectivo('emergencia', ...)` -- ver
     docstring del módulo. Devuelve (obtuvo, es_emergencia, coste, frescas_nueva,
-    rotas_nueva)."""
+    rotas_nueva).
+
+    `emergencia_forzada` (D9 §3.2, autorización R6, 22-08-2026): `None` (por
+    defecto) preserva el comportamiento de siempre -- lee `comandos.
+    valor_efectivo('emergencia', ...)`, la palanca de Clase B. Un valor
+    `True`/`False` explícito lo SUSTITUYE -- es cómo el tope de fase (Clase
+    C, "rebuy/emergencia apagados/encendidos" de la tabla de fases) fuerza
+    el valor sin pasar por el mecanismo de desviaciones de Clase B, que es
+    de otra naturaleza (humano, con caducidad) y no debe mezclarse con esto
+    (fase, sin caducidad, decidida al arrancar)."""
     cfg = config.obtener()
     if pool_frescas > 0:
         return True, False, 0.0, pool_frescas - 1, pool_rotas
-    emergencia_on = comandos.valor_efectivo('emergencia', cfg.orquestacion.emergencia.valor(),
-                                             estado, dia_actual)
+    if emergencia_forzada is None:
+        emergencia_on = comandos.valor_efectivo('emergencia', cfg.orquestacion.emergencia.valor(),
+                                                 estado, dia_actual)
+    else:
+        emergencia_on = emergencia_forzada
     if emergencia_on and pool_rotas > 0:
         cuota = cfg.proveedor.cuota_sub_usd.valor()
         return True, True, cuota, pool_frescas, pool_rotas - 1
@@ -88,7 +100,7 @@ def qcap_abierto_por_tesoreria(caja, retirado):
 # =============================================================================
 
 def arma_intento_eval(eval_estado, pool_estado, caja_delta, eventos, qok,
-                       intentos_nuevos_ok, estado, dia_actual):
+                       intentos_nuevos_ok, estado, dia_actual, emergencia_forzada=None):
     """PRE-mercado del intento 0 de eval -- extraído SIN CAMBIOS de lo que
     era el arranque de `procesa_dia_eval` (pipeline3.py:319-330 + el
     `sizing.plan` de la línea ~336), para D8.4 reestructurado
@@ -134,7 +146,8 @@ def arma_intento_eval(eval_estado, pool_estado, caja_delta, eventos, qok,
     if not ev["activa"]:
         if qok and intentos_nuevos_ok:
             obtuvo, es_emerg, coste, pool["frescas"], pool["rotas"] = toma_sub(
-                pool["frescas"], pool["rotas"], estado, dia_actual)
+                pool["frescas"], pool["rotas"], estado, dia_actual,
+                emergencia_forzada=emergencia_forzada)
             if obtuvo:
                 caja_delta -= coste
                 if es_emerg:
@@ -156,7 +169,7 @@ def arma_intento_eval(eval_estado, pool_estado, caja_delta, eventos, qok,
 
 
 def arma_empalme_eval(eval_estado, pool_estado, caja_delta, eventos, dia_previo,
-                       empalme_on, qok, estado, dia_actual):
+                       empalme_on, qok, estado, dia_actual, emergencia_forzada=None):
     """R-4.3: decide si HOY toca el ÚNICO empalme posible tras la muerte de
     un intento -- y si toca, arranca la sub nueva + arma su plan (fricción
     con el factor de empalme). Extraído SIN CAMBIOS de pipeline3.py:369-374
@@ -192,7 +205,7 @@ def arma_empalme_eval(eval_estado, pool_estado, caja_delta, eventos, dia_previo,
                      caja_delta=caja_delta, eventos=eventos)
 
     obtuvo, es_emerg, coste, pool["frescas"], pool["rotas"] = toma_sub(
-        pool["frescas"], pool["rotas"], estado, dia_actual)
+        pool["frescas"], pool["rotas"], estado, dia_actual, emergencia_forzada=emergencia_forzada)
     if not obtuvo:
         return dict(arranca=False, eval_estado=ev, pool_estado=pool,
                      caja_delta=caja_delta, eventos=eventos)

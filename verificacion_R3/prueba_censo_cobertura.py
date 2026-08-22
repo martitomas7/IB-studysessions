@@ -195,6 +195,37 @@ if __name__ == '__main__':
                  f"justo ahí, y esa bifurcación se hereda en todo día posterior) -- no una segunda medición "
                  f"contradictoria de lo mismo, sino la misma tabla vista por dos caminos distintos, cada "
                  f"uno correcto para su propio contrato.\n")
+        fh.write("\n## Censo de \"la documentación promete código que no existe todavía\"\n\n")
+        fh.write("Pasada rápida (22-08-2026, `DECISION_CREDENCIALES_Y_FASE.md` punto 5: \"si han\n")
+        fh.write("aparecido tres casos... probablemente haya un cuarto\") sobre `*.md` en busca\n")
+        fh.write("del mismo patrón que motivó ese punto: un documento describiendo, en\n")
+        fh.write("presente, un comportamiento que el código todavía no tiene. **Solo se anota\n")
+        fh.write("-- no se corrige aquí ninguno de los dos.** (Esta sección vive en el generador,\n")
+        fh.write("`prueba_censo_cobertura.py`, no solo en el .md -- de lo contrario cada\n")
+        fh.write("regeneración de la tabla de arriba la borraría.)\n\n")
+        fh.write("| Documento | Qué promete | Qué hay de verdad hoy | Estado |\n|---|---|---|---|\n")
+        fh.write("| `07_ADAPTADOR_NT8.md:92` (antes de esta pasada) | \"el agregador del residuo... "
+                 "**ya** se niega a calcular `spr_usd` con registros `NO_VALIDA`\" | No existe ningún "
+                 "agregador que rechace por `NO_VALIDA`; `papel_feed_retrasado` y el marcado "
+                 "`NO_VALIDA` por registro no existen en `bot/` (D9 §3.3, aún sin construir) | "
+                 "**Corregido en esta misma sesión** -- ver el bloque \"PENDIENTE\" añadido justo "
+                 "debajo de esa línea |\n")
+        fh.write("| `02_ARQUITECTURA.md` §9 (tabla de banderas) | Presenta `--modo simulado/papel/real`, "
+                 "`--replay <fichero>`, `--dry-run`, `--parar` como banderas de línea de comandos "
+                 "reales, con columna \"qué hace\" en presente | No existe ningún "
+                 "`main.py`/`cli.py`/`__main__.py` ni `argparse.ArgumentParser` en todo `bot/` "
+                 "(confirmado por grep exhaustivo) -- `bucle_del_dia()`/`corre_replay()` solo se "
+                 "invocan hoy directamente desde Python (scripts de `verificacion_R3/`, no desde una "
+                 "CLI). Coincide exactamente con D9 §5.4 (\"--config/--estado/--fase obligatorios\"), "
+                 "que sigue **pendiente** en el orden de trabajo -- la tabla describe la interfaz que "
+                 "§5.4 debe construir, no una que ya exista | **Anotado, sin tocar** -- corregirlo "
+                 "(marcarlo \"pendiente\" igual que el caso de arriba) le corresponde a quien "
+                 "construya D9 §5.4, no a esta pasada de censo |\n")
+        fh.write("\nNo ha aparecido un tercer caso en esta pasada (se revisaron "
+                 "`09_DESPLIEGUE.md`, `11_MANUAL_OPERADOR.md`, `05_ORDEN_DE_CONSTRUCCION.md` y grep "
+                 "de `checksum_fijado`/`panel`/`formulario`/`probar_conexion` sobre todo el árbol de "
+                 "`*.md`, sin más coincidencias sospechosas). Si aparece un tercero más adelante, "
+                 "añadir una fila aquí, no una nueva sección.\n")
 
     print(open(RUTA_SALIDA).read())
 

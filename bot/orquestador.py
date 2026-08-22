@@ -51,7 +51,7 @@ from bot import config, estado as E, calendario, ciclo_vida as CV, tesoreria as 
 
 def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
                  resuelve_dia_eval=None, resuelve_dia_funded=None, modo_auto_confirma=True,
-                 resuelve_concurrente=None):
+                 resuelve_concurrente=None, topes=None):
     """D8.4 (ORDEN_DE_TRABAJO_D8.md §0, revisión 20-08-2026, diseño grounded vía
     panel de ángulos + síntesis): el pegamento COMPARTIDO de un día -- pool,
     funded, eval, tesorería, retiro, `contra_pendiente` de mañana -- extraído
@@ -94,12 +94,33 @@ def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
     con la caja YA actualizada por funded -- ver el defecto conocido en
     `RESPUESTA_D8_CONCURRENCIA.md` §2/§5 (medido: 1/504 días, -49,74 $).
 
+    `topes` (D9 §3.2, autorización R6, 22-08-2026): `None` por defecto --
+    preserva bit a bit el comportamiento de siempre (ningún tope de fase,
+    el `while` de abajo no cambia ni una decisión). Si se da, es un dict
+    YA RESUELTO por el llamador (`bot/bucle_del_dia.py`, donde vive la
+    tabla fase→topes -- este módulo no sabe qué es 'f3.1', solo aplica
+    números): `{'eval': int|None, 'funded': int|None, 'recamara': int|None}`
+    -- cada clave, si no es `None`, es el número MÁXIMO de esa cuenta
+    activa/dormida SIMULTÁNEAMENTE permitido; `None` en una clave = sin
+    tope para ESA cuenta (aunque `topes` en sí no sea `None`). Se aplica
+    ANTES de calcular `qok` (bloquea que se abran intentos nuevos) y antes
+    de activar funded desde la recámara -- NUNCA revierte una aprobación
+    ya en curso (el dinero de un `sunk_a_recamara` nunca se descarta,
+    aunque momentáneamente deje la recámara por encima de su tope: el
+    tope solo impide que se AÑADA actividad nueva, ver más abajo). Solo
+    aplica en el camino concurrente (`resuelve_concurrente is not None`)
+    -- el camino "de siempre" solo lo usa el replay offline, que nunca
+    pasa `topes`. Un día bloqueado por el tope se anota en `diario`
+    (clave `tope_de_fase`, `None` si nada se bloqueó hoy) -- nunca en
+    silencio.
+
     Devuelve (st_nuevo, fin_de_dia_dict, diario_linea_dict) -- misma forma
     que siempre.
     """
     cfg = config.obtener()
     kwargs_eval = {} if resuelve_dia_eval is None else dict(resuelve_dia=resuelve_dia_eval)
     kwargs_funded = {} if resuelve_dia_funded is None else dict(resuelve_dia=resuelve_dia_funded)
+    tope_de_fase_hoy = None
 
     # --- pool: coste fijo diario + resets forzados del día ---------------------
     st["caja"] -= CV.coste_diario_pool()
@@ -111,8 +132,18 @@ def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
                   resets=n_resets_hoy, emergencias=0, recompras=0, cuotas_dia=0.0)
 
     # --- funded: relevo (R-5.1) -- SIEMPRE igual, en los dos caminos ------------
-    st["funded"], st["recamara"]["dormidas"], activada_hoy = CV.activa_funded_si_toca(
-        st["funded"], st["recamara"]["dormidas"])
+    # D9 §3.2: si el tope de fase para 'funded' ya está en su límite (hoy
+    # inactiva, activarla lo superaría), ni siquiera se llama a
+    # activa_funded_si_toca() -- la dormida sigue esperando en recámara,
+    # intacta, para el día en que el tope se levante (Clase C, config +
+    # reinicio) o para cuando de verdad le toque relevo sin tope.
+    tope_funded = topes.get("funded") if topes is not None else None
+    if tope_funded is not None and not st["funded"]["activa"] and tope_funded < 1:
+        activada_hoy = False
+        tope_de_fase_hoy = f"funded bloqueada (tope de fase={tope_funded})"
+    else:
+        st["funded"], st["recamara"]["dormidas"], activada_hoy = CV.activa_funded_si_toca(
+            st["funded"], st["recamara"]["dormidas"])
     st["recamara"]["n"] = len(st["recamara"]["dormidas"])
     st["recamara"]["sunk_total"] = sum(d["s0"] for d in st["recamara"]["dormidas"])
 
@@ -122,7 +153,36 @@ def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
         # docstring arriba), calculado ANTES de resolver nada de hoy.
         qok = CV.qcap_abierto(st["recamara"]["n"]) or CV.qcap_abierto_por_tesoreria(
             st["caja"], st["retirado"])
-        r_funded, r_eval = resuelve_concurrente(st, direccion, b0v, qok, modo_auto_confirma)
+        # D9 §3.2: el tope de fase es un veto DURO sobre qok -- ni la
+        # tesorería viva lo levanta (a diferencia de qcap_tes_usd, que sí
+        # levanta el tope de config: el tope de FASE es más estricto a
+        # propósito, por diseño, no un descuido). 'eval' se comprueba con
+        # la MISMA forma que 'recamara' (uniformidad, no un caso especial)
+        # aunque con la tabla de fases de hoy nunca llega a bloquear nada
+        # -- eval ya es de un solo slot estructural (st['eval'] no es una
+        # lista), así que ningún tope >=1 lo restringe de verdad.
+        if topes is not None and qok:
+            tope_recamara = topes.get("recamara")
+            tope_eval = topes.get("eval")
+            eval_activas_hoy = 1 if st["eval"]["activa"] else 0
+            motivo_qok = None
+            if tope_recamara is not None and st["recamara"]["n"] >= tope_recamara:
+                qok = False
+                motivo_qok = (f"eval no abre hoy: recamara.n={st['recamara']['n']} "
+                              f">= tope de fase={tope_recamara}")
+            elif tope_eval is not None and eval_activas_hoy >= tope_eval:
+                qok = False
+                motivo_qok = (f"eval no abre hoy: eval activas={eval_activas_hoy} "
+                              f">= tope de fase={tope_eval}")
+            if motivo_qok is not None:
+                # AÑADE, nunca sustituye -- si el mismo día ya se anotó el
+                # bloqueo de funded (arriba), las dos razones deben quedar
+                # visibles: "nunca en silencio" incluye no silenciar la
+                # SEGUNDA razón pisando la primera.
+                tope_de_fase_hoy = (tope_de_fase_hoy + "; " + motivo_qok
+                                     if tope_de_fase_hoy else motivo_qok)
+        r_funded, r_eval = resuelve_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
+                                                 topes=topes)
         if r_funded is not None:
             st["funded"] = r_funded["funded_estado"]
             st["caja"] += r_funded["caja_delta"]
@@ -220,7 +280,7 @@ def procesa_dia(st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
         pool=dict(frescas=st["pool"]["frescas"], rotas=st["pool"]["rotas"]))
 
     diario = dict(dia=st["dia_negociacion"], direccion=direccion, ventana=ventana_txt,
-                  eventos=ev_dia, fin_de_dia=fin_de_dia)
+                  eventos=ev_dia, fin_de_dia=fin_de_dia, tope_de_fase=tope_de_fase_hoy)
     return st, fin_de_dia, diario
 
 

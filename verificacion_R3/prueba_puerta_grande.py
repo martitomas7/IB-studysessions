@@ -123,7 +123,7 @@ def corre_pasada(modo_qok, sufijo):
             ruta_estado=ruta_estado, ruta_nivel=os.path.join(dir_run, "nivel.json"),
             ruta_ordenes=os.path.join(dir_run, "ordenes"), ruta_lock=os.path.join(dir_run, "bot.lock"),
             dir_instantaneas=os.path.join(dir_run, "instantaneas"), dias_retenidos=5,
-            ruta_diario=os.path.join(dir_run, "diario.jsonl"), dormir=lambda s: None)
+            ruta_diario=os.path.join(dir_run, "diario.jsonl"), fase='plena', dormir=lambda s: None)
     finally:
         if modo_qok == 'contrato':
             bucle_de_tiempo.resuelve_dia_concurrente = resuelve_original

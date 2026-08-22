@@ -165,7 +165,7 @@ def _corre_un_dia(dia_pack, modo, ruido, rng, dir_base):
         ruta_estado=ruta_estado, ruta_nivel=os.path.join(dir_base, "nivel.json"),
         ruta_ordenes=os.path.join(dir_base, "ordenes"), ruta_lock=os.path.join(dir_base, "bot.lock"),
         dir_instantaneas=os.path.join(dir_base, "instantaneas"), dias_retenidos=1,
-        ruta_diario=os.path.join(dir_base, "diario.jsonl"), dormir=lambda s: None,
+        ruta_diario=os.path.join(dir_base, "diario.jsonl"), fase='plena', dormir=lambda s: None,
         dir_residuo=dir_residuo)
     ruta_eventos = os.path.join(dir_residuo, "eventos_0001.jsonl")
     eventos = [json.loads(l) for l in open(ruta_eventos)] if os.path.isfile(ruta_eventos) else []

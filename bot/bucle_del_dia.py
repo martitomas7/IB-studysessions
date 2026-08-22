@@ -37,6 +37,50 @@ def _escribe_linea_diario(ruta_diario, diario):
         fh.write(json.dumps(diario) + "\n")
 
 
+FASES_VALIDAS = frozenset({'f3.1', 'f3.2', 'f3.3', 'plena'})
+
+
+def _topes_de_fase(fase):
+    """D9 §3.2 (autorización R6, 22-08-2026): la tabla fase -> topes tal
+    cual la fijó el operador. Vive AQUÍ, no en `orquestador.py`/
+    `bucle_de_tiempo.py` -- esos dos módulos solo APLICAN números, nunca
+    saben qué es 'f3.1' (docstring de `orquestador.py`: "prohibido que
+    contenga reglas de negocio").
+
+    | fase  | eval | funded | recamara | rebuy / emergencia |
+    |-------|------|--------|----------|--------------------|
+    | f3.1  | 1    | 0      | 0        | apagados           |
+    | f3.2  | 1    | 1      | 1        | encendidos         |
+    | f3.3  | -    | 1      | qcap     | según config       |
+    | plena | -    | -      | -        | según config       |
+
+    `None` en un campo = "sin tope EXTRA para esa cuenta, más allá de lo
+    que ya hace config" (NUNCA "sin cuentas permitidas") -- 'f3.3.recamara'
+    usa `None` porque eso es exactamente lo que ya hace `qcap_abierto()`
+    sin tope de fase (capado a `orquestacion.qcap`, ni más ni menos). Para
+    'plena' se devuelve `None` directamente (el dict entero, no un campo)
+    -- la señal que `orquestador.procesa_dia()`/
+    `bucle_de_tiempo.resuelve_dia_concurrente()` interpretan como "cero
+    cambio de comportamiento", el requisito de que el replay de 504 días
+    quede intacto bit a bit.
+
+    `funded=1` en f3.3 es ESTRUCTURAL, no un tope nuevo que haga falta
+    comprobar -- `st['funded']` es un único booleano en este modelo (nunca
+    una lista), así que jamás puede haber más de una fondeada activa a la
+    vez, con o sin esta tabla. Se deja explícito aquí, como pidió el
+    operador, "para que nadie lo lea como 'en f3.3 se sueltan las
+    fondeadas'" -- documentación, no una comprobación nueva."""
+    if fase not in FASES_VALIDAS:
+        raise ValueError(f"fase={fase!r} no reconocida -- debe ser una de {sorted(FASES_VALIDAS)}")
+    if fase == 'f3.1':
+        return dict(eval=1, funded=0, recamara=0, rebuy=False, emergencia=False)
+    if fase == 'f3.2':
+        return dict(eval=1, funded=1, recamara=1, rebuy=True, emergencia=True)
+    if fase == 'f3.3':
+        return dict(eval=None, funded=1, recamara=None, rebuy=None, emergencia=None)
+    return None   # 'plena' -- sin tope de fase, comportamiento de siempre
+
+
 def _escribe_eventos_residuo(dir_residuo, dia_negociacion, eventos):
     """D9 §3.6 (autorización R6, 22-08-2026, Capa B): un fichero JSONL por
     día, `residuo/eventos_<dia_negociacion>.jsonl` -- una línea por evento
@@ -62,7 +106,7 @@ def _escribe_eventos_residuo(dir_residuo, dia_negociacion, eventos):
 def bucle_del_dia(fuente_barras, adaptador,
                    cuenta_hedge_eval, cuenta_prop_eval, cuenta_hedge_funded, cuenta_prop_funded,
                    instrumento_prop, ruta_estado, ruta_nivel, ruta_ordenes, ruta_lock,
-                   dir_instantaneas, dias_retenidos, ruta_diario,
+                   dir_instantaneas, dias_retenidos, ruta_diario, fase,
                    modo_auto_confirma=True, rng=None, reloj=None, dormir=None, dir_residuo=None):
     """El bucle único de D8.4. `fuente_barras` (`bot/fuente_barras.py`) y
     `adaptador` (puerto de `07_ADAPTADOR_NT8.md` §1) son los DOS puertos
@@ -92,18 +136,43 @@ def bucle_del_dia(fuente_barras, adaptador,
     arnés dedicado de esta pieza (`verificacion_R3/prueba_residuo_operacion.py`)
     lo pasa de verdad.
 
-    Devuelve el `st` final, o `None` si `estado.json` está corrupto (ya
-    reaccionado a N4 antes de devolver)."""
+    `fase` (D9 §3.2, autorización R6, 22-08-2026): OBLIGATORIO, sin valor
+    por defecto -- una de `'f3.1'`/`'f3.2'`/`'f3.3'`/`'plena'` (ver
+    `_topes_de_fase()` para la tabla exacta). El bot NUNCA escala su
+    propia fase (Clase C: editar el arranque + reiniciar, nunca desde el
+    dashboard -- no hay ningún comando que la cambie, ver
+    `bot/comandos.py::CLASE_A`/`CLASE_B`, que no la nombran). Al arrancar,
+    si `estado.json` ya excede el tope de la fase pedida, el bot NO
+    arranca (falla explícito, nunca trunca en silencio). `fase='plena'`
+    reproduce el comportamiento de siempre, bit a bit -- es la que usan
+    los arneses de R3 que no necesitan tope alguno.
+
+    Devuelve el `st` final, o `None` si `estado.json` está corrupto, o si
+    excede el tope de fase al arrancar (los dos casos ya reaccionados a
+    N4 antes de devolver)."""
     import random as _random
     import time as _time
     reloj = reloj or _time.monotonic
     dormir = dormir or _time.sleep
+    topes = _topes_de_fase(fase)
 
     with bloqueo_proceso.adquiere(ruta_lock):
         try:
             st = estado.cargar(ruta_estado)
         except estado.EstadoInvalidoError as ex:
             SEG.reacciona_a_estado_invalido(ruta_nivel, detalle=str(ex))
+            return None
+
+        fallos_fase = estado.valida_tope_fase(st, topes)
+        if fallos_fase:
+            # D9 §3.2: "si estado.json ya tiene más cuentas activas que las
+            # que la fase pedida permite, el arranque debe FALLAR
+            # explícitamente, nunca truncar en silencio" -- misma reacción
+            # que un estado corrupto (N4 + detalle), nunca una excepción
+            # cruda sin contexto.
+            detalle = (f"estado.json en {ruta_estado} ya excede el tope de fase={fase!r} -- "
+                       f"el bot NO arranca:\n" + "\n".join(f"  - {x}" for x in fallos_fase))
+            SEG.reacciona_a_estado_invalido(ruta_nivel, detalle=detalle)
             return None
 
         if SEG.nivel_actual(ruta_nivel) in ('N3', 'N4'):
@@ -240,7 +309,8 @@ def bucle_del_dia(fuente_barras, adaptador,
             st, fin_de_dia, diario = orquestador.procesa_dia(
                 st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
                 resuelve_dia_eval=resuelve_eval, resuelve_dia_funded=resuelve_funded,
-                modo_auto_confirma=modo_auto_confirma, resuelve_concurrente=resuelve_concurrente)
+                modo_auto_confirma=modo_auto_confirma, resuelve_concurrente=resuelve_concurrente,
+                topes=topes)
 
             if dir_residuo is not None and resuelve_concurrente is not None:
                 _escribe_eventos_residuo(dir_residuo, st["dia_negociacion"], eventos_hoy)

@@ -157,6 +157,50 @@ def validar(estado, checksum_config_actual):
     return f
 
 
+def valida_tope_fase(estado, topes):
+    """D9 §3.2 (autorización R6, 22-08-2026): el guardián de ARRANQUE del
+    tope de fase -- deliberadamente SEPARADO de `validar()` (decisión
+    explícita del operador, no mía): el tope de fase es política de
+    DESPLIEGUE, no un invariante de `estado.json` -- el MISMO estado es
+    válido bajo una fase y no bajo otra, y meterlo dentro de `validar()`
+    destruiría lo que significa "invariante" (además de arrastrar la
+    firma a `guardar()` y al replay, que deben quedar intactos). Por eso
+    esta función vive aparte, y el llamador (`bot/bucle_del_dia.py`)
+    decide cuándo invocarla -- justo después de `cargar()`, antes de
+    operar nada.
+
+    `topes`: el mismo dict que interpreta `orquestador.procesa_dia()`
+    (`{'eval': int|None, 'funded': int|None, 'recamara': int|None, ...}`,
+    la tabla fase→topes vive en `bucle_del_dia.py`, este módulo no sabe
+    qué es 'f3.1'). `topes=None` -> nunca falla (fase='plena', sin tope).
+
+    "Si `estado.json` ya tiene más cuentas activas que las que la fase
+    pedida permite, el arranque debe FALLAR explícitamente, nunca truncar
+    en silencio" -- por eso esto compara el estado YA CARGADO contra el
+    tope, en vez de simplemente no operar más allá de él a partir de hoy.
+
+    Devuelve la lista de fallos (vacía = arranca limpio) -- MISMO patrón
+    que `validar()`, para que el llamador reaccione igual (típicamente
+    envolviendo en `EstadoInvalidoError`, aunque esta función no lo hace
+    ella misma -- no le corresponde decidir la reacción, solo medir)."""
+    if topes is None:
+        return []
+    f = []
+    tope_eval = topes.get('eval')
+    eval_activas = 1 if estado['eval']['activa'] else 0
+    if tope_eval is not None and eval_activas > tope_eval:
+        f.append(f"tope de fase: eval activas ({eval_activas}) > tope permitido ({tope_eval})")
+    tope_funded = topes.get('funded')
+    funded_activas = 1 if estado['funded']['activa'] else 0
+    if tope_funded is not None and funded_activas > tope_funded:
+        f.append(f"tope de fase: funded activas ({funded_activas}) > tope permitido ({tope_funded})")
+    tope_recamara = topes.get('recamara')
+    if tope_recamara is not None and estado['recamara']['n'] > tope_recamara:
+        f.append(f"tope de fase: recamara.n ({estado['recamara']['n']}) > "
+                 f"tope permitido ({tope_recamara})")
+    return f
+
+
 def cargar(ruta):
     """Carga y valida `estado.json`. Lanza EstadoInvalidoError si algún invariante
     falla o si el checksum de config no coincide -- 'fallar al arrancar', mismo

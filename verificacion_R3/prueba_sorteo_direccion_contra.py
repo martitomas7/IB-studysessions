@@ -320,7 +320,7 @@ try:
         ruta_estado=ruta_estado, ruta_nivel=os.path.join(DIR, "nivel.json"),
         ruta_ordenes=os.path.join(DIR, "ordenes"), ruta_lock=os.path.join(DIR, "bot.lock"),
         dir_instantaneas=os.path.join(DIR, "instantaneas"), dias_retenidos=5,
-        ruta_diario=os.path.join(DIR, "diario.jsonl"),
+        ruta_diario=os.path.join(DIR, "diario.jsonl"), fase='plena',
         rng=RngControlado(contador_dia, DIA_CAMBIO), dormir=lambda s: None)
 finally:
     calendario.sortea_direccion = _orig_sortea

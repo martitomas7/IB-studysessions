@@ -36,12 +36,21 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
                               adaptador, fuente_barras, cuenta_hedge_eval, cuenta_prop_eval,
                               cuenta_hedge_funded, cuenta_prop_funded, instrumento_prop,
                               ruta_ordenes, ruta_nivel, dia_negociacion,
-                              eventos=None, reloj=None, dormir=None):
+                              eventos=None, reloj=None, dormir=None, topes=None):
     """Un día completo de funded+eval, EN VIVO, por el bucle de tiempo
     compartido. `st["funded"]`/`st["eval"]`/`st["pool"]` se leen tal como
     están (el llamador, `orquestador.procesa_dia()`, ya habrá corrido
     `activa_funded_si_toca` antes de llegar aquí, igual que en el camino
     de siempre).
+
+    `topes` (D9 §3.2, autorización R6, 22-08-2026): `None` por defecto,
+    cero cambio de comportamiento -- ver el docstring de
+    `orquestador.procesa_dia()` para la forma del dict. Aquí solo se leen
+    `topes['rebuy']`/`topes['emergencia']` (`True`/`False` explícito
+    SUSTITUYE la config de siempre; `None`, o ausente, la deja intacta) --
+    el resto de `topes` (`eval`/`funded`/`recamara`) ya lo aplicó
+    `orquestador.procesa_dia()` sobre `qok` antes de llamar aquí, así que
+    esta función no vuelve a mirarlos.
 
     Devuelve `(r_funded, r_eval)` -- MISMAS formas que
     `ciclo_vida.procesa_dia_funded()`/`procesa_dia_eval()` (`r_funded` es
@@ -56,6 +65,11 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
     intentos_nuevos_ok = comandos.valor_efectivo('pausa_eval', True, st, dia_negociacion)
     cuota = cfg.proveedor.cuota_sub_usd.valor()
     rebuy_on = cfg.orquestacion.rebuy.valor()
+    emergencia_forzada = None
+    if topes is not None:
+        if topes.get('rebuy') is not None:
+            rebuy_on = topes['rebuy']
+        emergencia_forzada = topes.get('emergencia')
 
     def _maquina(slot, cuenta_hedge, cuenta_prop, intento):
         return MaquinaEnVivo(adaptador, cuenta_hedge, cuenta_prop, instrumento_prop, direccion,
@@ -87,7 +101,8 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
 
     eventos_cero = dict(intentos=0, aprobaciones=0, emergencias=0, recompras=0, muertes_eval=0)
     arm_e = CV.arma_intento_eval(st["eval"], st["pool"], 0.0, eventos_cero, qok,
-                                  intentos_nuevos_ok, st, dia_negociacion)
+                                  intentos_nuevos_ok, st, dia_negociacion,
+                                  emergencia_forzada=emergencia_forzada)
     st["pool"] = arm_e["pool_estado"]   # el pool es compartido -- se escribe YA, no al cerrar el día
     eval_intento_siguiente = 1
     r_eval_final = None
@@ -130,7 +145,8 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
             else:
                 arm_emp = CV.arma_empalme_eval(r['eval_estado'], r['pool_estado'], r['caja_delta'],
                                                 r['eventos'], m_eval.resultado, empalme_on, qok,
-                                                st, dia_negociacion)
+                                                st, dia_negociacion,
+                                                emergencia_forzada=emergencia_forzada)
                 st['pool'] = arm_emp['pool_estado']
                 if not arm_emp["arranca"]:
                     # murió y no hubo empalme (deshabilitado, fuera de la

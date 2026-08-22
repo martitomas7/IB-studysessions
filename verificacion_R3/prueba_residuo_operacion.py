@@ -117,7 +117,7 @@ try:
         ruta_estado=ruta_estado, ruta_nivel=ruta_nivel,
         ruta_ordenes=os.path.join(DIR, "ordenes"), ruta_lock=os.path.join(DIR, "bot.lock"),
         dir_instantaneas=os.path.join(DIR, "instantaneas"), dias_retenidos=5,
-        ruta_diario=os.path.join(DIR, "diario.jsonl"),
+        ruta_diario=os.path.join(DIR, "diario.jsonl"), fase='plena',
         rng=RngFijo(), dormir=lambda s: None, dir_residuo=DIR_RESIDUO)
 finally:
     SIZING_MOD.plan = _orig_plan   # nunca dejar el espía puesto más allá de esta prueba

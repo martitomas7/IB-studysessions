@@ -172,7 +172,7 @@ def _corre_dia(camino, forzar_liquidacion=False, cuenta_prop_forzar=None, semill
         ruta_estado=RUTA_ESTADO, ruta_nivel=RUTA_NIVEL,
         ruta_ordenes=os.path.join(DIR, "ordenes"), ruta_lock=os.path.join(DIR, "bot.lock"),
         dir_instantaneas=os.path.join(DIR, "instantaneas"), dias_retenidos=5,
-        ruta_diario=RUTA_DIARIO, rng=random.Random(semilla), dormir=lambda s: None)
+        ruta_diario=RUTA_DIARIO, fase='plena', rng=random.Random(semilla), dormir=lambda s: None)
     nivel_por_dia.append((st['dia_negociacion'] if st is not None else None, SEG.nivel_actual(RUTA_NIVEL)))
     return st, fuente
 

@@ -167,7 +167,7 @@ def _corre_un_dia(ruta_estado, ruta_nivel, dir_run, semilla):
         ruta_estado=ruta_estado, ruta_nivel=ruta_nivel,
         ruta_ordenes=os.path.join(dir_run, "ordenes"), ruta_lock=os.path.join(dir_run, "bot.lock"),
         dir_instantaneas=os.path.join(dir_run, "instantaneas"), dias_retenidos=5,
-        ruta_diario=os.path.join(dir_run, "diario.jsonl"),
+        ruta_diario=os.path.join(dir_run, "diario.jsonl"), fase='plena',
         rng=random.Random(semilla), dormir=lambda s: None)
 
 
