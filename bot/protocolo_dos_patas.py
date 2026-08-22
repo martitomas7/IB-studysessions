@@ -129,6 +129,12 @@ def abre_las_dos_patas(adaptador, cuenta_hedge, cuenta_prop, instrumento_prop,
     reloj = reloj or time.monotonic
     dormir = dormir or time.sleep
     eventos = eventos if eventos is not None else []
+    # D9 §3.4/3.6 fusionadas: "cuándo decidió el bot" para las DOS patas de
+    # esta apertura -- es UNA sola decisión (abrir las dos), tomada aquí,
+    # antes de mandar la primera orden. `_registra_divergencia()` no puede
+    # saber esto por sí sola (no es un dato del adaptador, ver
+    # 07_ADAPTADOR_NT8.md §1.1), así que se captura una vez y se hila.
+    ts_decision = reloj()
     cfg = config.obtener()
     N = cfg.adaptador.timeout_prop_s.valor()
     N_hedge = cfg.adaptador.timeout_hedge_s.valor()
@@ -190,7 +196,7 @@ def abre_las_dos_patas(adaptador, cuenta_hedge, cuenta_prop, instrumento_prop,
                     motivo='prop_rechazada_hedge_aplanado')
     if not agoto:
         # LLENA
-        _registra_divergencia(adaptador, oid_hedge, oid_prop, eventos)
+        _registra_divergencia(adaptador, oid_hedge, oid_prop, eventos, m, k, ts_decision)
         return dict(abierto=True, order_id_hedge=oid_hedge, order_id_prop=oid_prop)
 
     # 4b: pasa N sin confirmar y sin rechazo -- SIEMPRE se cancela la prop
@@ -209,7 +215,7 @@ def abre_las_dos_patas(adaptador, cuenta_hedge, cuenta_prop, instrumento_prop,
         # la cancelación llegó tarde: la prop SI se ejecutó -- no se toca el
         # hedge, las dos patas están puestas.
         eventos.append(evento)
-        _registra_divergencia(adaptador, oid_hedge, oid_prop, eventos)
+        _registra_divergencia(adaptador, oid_hedge, oid_prop, eventos, m, k, ts_decision)
         return dict(abierto=True, order_id_hedge=oid_hedge, order_id_prop=oid_prop)
     else:
         # PARCIAL / error de cancelación / estado ambiguo: no se puede
@@ -226,16 +232,46 @@ def abre_las_dos_patas(adaptador, cuenta_hedge, cuenta_prop, instrumento_prop,
                     motivo='prop_ambiguo_tras_cancelar_aplanadas_las_dos')
 
 
-def _registra_divergencia(adaptador, oid_hedge, oid_prop, eventos):
+def _registra_divergencia(adaptador, oid_hedge, oid_prop, eventos, m, k, ts_decision):
     """07_ADAPTADOR_NT8.md §5.3, retoque de revisión 3: en CUALQUIER apertura
     donde las dos patas confirmen, se registra `AvgFillPrice` de las dos y su
-    diferencia como evento de laboratorio -- 08_LABORATORIO.md §1.2."""
+    diferencia como evento de laboratorio -- 08_LABORATORIO.md §1.2.
+
+    D9 §3.4/3.6 fusionadas (autorización R6, 22-08-2026): además del evento
+    agregado de siempre (`divergencia_fill`, sin tocar), añade UN registro
+    de residuo por PATA (`residuo_operacion`, el esquema del §5 de la
+    autorización) -- `tipo_salida='entrada'` siempre es `tipo_orden='mercado'`
+    (`abrir()` nunca lleva precio, R2: no hay 'nivel pedido' que inventarle a
+    una orden de mercado), así que la única desviación medible en la entrada
+    es la de las dos patas ENTRE SÍ -- `diferencia`, convertida a ticks vía
+    `hedge_broker.tick_usd`/`valor_punto_usd` (03_CONFIG.yaml, ya con fuente y
+    fecha -- nunca un tamaño de tick inventado aquí). Es la MISMA magnitud
+    para las dos patas (una medida PAREADA, no separable por pata) -- se
+    repite en los dos registros a propósito, para que cada uno sea legible
+    por sí solo sin tener que ir a buscar su pareja."""
+    cfg = config.obtener()
+    tick_puntos = cfg.hedge_broker.tick_usd.valor() / cfg.hedge_broker.valor_punto_usd.valor()
     _, _, precio_hedge = adaptador.leer_fill(oid_hedge)
     _, _, precio_prop = adaptador.leer_fill(oid_prop)
     if precio_hedge is not None and precio_prop is not None:
+        diferencia = precio_prop - precio_hedge
         eventos.append(dict(tipo='divergencia_fill', order_id_hedge=oid_hedge,
                              order_id_prop=oid_prop, precio_hedge=precio_hedge,
-                             precio_prop=precio_prop, diferencia=precio_prop - precio_hedge))
+                             precio_prop=precio_prop, diferencia=diferencia))
+        desviacion_ticks = diferencia / tick_puntos
+        for pata, order_id, precio, contratos in (('hedge', oid_hedge, precio_hedge, m),
+                                                    ('prop', oid_prop, precio_prop, k)):
+            det = adaptador.leer_fill_detalle(order_id)
+            eventos.append(dict(
+                tipo='residuo_operacion', pata=pata, tipo_salida='entrada', tipo_orden='mercado',
+                nivel_pedido=None, fill_obtenido=precio, desviacion_ticks=desviacion_ticks,
+                m=m, contratos=contratos, order_id=order_id,
+                feed_origen=det['feed_origen'], ts_feed=det['ts_feed'],
+                ts_feed_motivo=det['ts_feed_motivo'], ts_decision=ts_decision,
+                ts_orden=det['ts_orden'], ts_fill_broker=det['ts_fill_broker'],
+                ts_fill_broker_motivo=det['ts_fill_broker_motivo'],
+                ts_fill_recibido=det['ts_fill_recibido'],
+                ts_fill_recibido_motivo=det['ts_fill_recibido_motivo']))
 
 
 def cierra_las_dos_patas(adaptador, cuenta_prop, instrumento_prop, cuenta_hedge,

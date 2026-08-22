@@ -241,6 +241,7 @@ class ResuelveDiaEnVivo:
             if barra is None or (barra_usable and barra.es_ultima_barra_operable):
                 # ninguna pata llenó antes de la campana -- cancela el grupo
                 # y cierra a mercado (mismo camino que el modelo, "ninguno toca").
+                ts_decision = self.reloj()   # D9 §3.4/3.6: el instante en que el bot vio la campana
                 self.adaptador.cancelar(oid_stop)   # cancela el grupo completo (D8.2)
                 # Se cierra la prop A MANO primero (en vez de dejárselo entero a
                 # cierra_las_dos_patas) SOLO para poder capturar el order_id de la
@@ -263,7 +264,10 @@ class ResuelveDiaEnVivo:
                 resultado = self._resuelve_con_formula(det, plan_resultado['k'], dx_real,
                                                         low=False, tgt=False,
                                                         barra_evento=barra_actual)
-                self._registra_divergencia(det, dx_real)
+                self._registra_divergencia(det, dx_real, tipo_salida='campana', tipo_orden='mercado',
+                                            nivel_pedido=None, fill_obtenido=precio_cierre_real,
+                                            order_id=oid_cierre_prop, k=plan_resultado['k'],
+                                            ts_decision=ts_decision)
                 self._intento += 1
                 return resultado
             self.dormir(0.0)   # cede el hilo; en vivo, fuente_barras es quien de verdad espera
@@ -271,6 +275,7 @@ class ResuelveDiaEnVivo:
         # 7. una pata llenó -- cancela la hermana (defensa idempotente de
         #    respaldo, D8.2 síntesis: "D8 vigila igualmente y cancela por su
         #    cuenta") y cierra SOLO el hedge (la prop ya se cerró sola).
+        ts_decision = self.reloj()   # D9 §3.4/3.6: el instante en que el bot vio LLENA
         oid_ganadora = oid_stop if ganadora == 'stop' else oid_lim
         oid_perdedora = oid_lim if ganadora == 'stop' else oid_stop
         self.adaptador.cancelar(oid_perdedora)
@@ -281,7 +286,12 @@ class ResuelveDiaEnVivo:
         resultado = self._resuelve_con_formula(det, plan_resultado['k'], dx_real,
                                                 low=(ganadora == 'stop'),
                                                 tgt=(ganadora == 'limite'), barra_evento=barra_actual)
-        self._registra_divergencia(det, dx_real)
+        self._registra_divergencia(
+            det, dx_real, tipo_salida=('suelo' if ganadora == 'stop' else 'objetivo'),
+            tipo_orden=('stop' if ganadora == 'stop' else 'limite'),
+            nivel_pedido=(precio_stop_real if ganadora == 'stop' else precio_limite_real),
+            fill_obtenido=precio_fill_real, order_id=oid_ganadora, k=plan_resultado['k'],
+            ts_decision=ts_decision)
         self._intento += 1
         return resultado
 
@@ -303,10 +313,35 @@ class ResuelveDiaEnVivo:
         det_calculo._cierra(dx_real, low=low, tgt=tgt, barra_evento=barra_evento)
         return det_calculo.resultado
 
-    def _registra_divergencia(self, det_diagnostico, dx_real):
+    def _registra_divergencia(self, det_diagnostico, dx_real, tipo_salida, tipo_orden,
+                               nivel_pedido, fill_obtenido, order_id, k, ts_decision):
         """8. Oráculo de diagnóstico -- compara lo que el detector, alimentado
         SOLO con barras, habría predicho contra el dx REAL observado. NUNCA
-        decide bookkeeping -- solo loguea."""
+        decide bookkeeping -- solo loguea.
+
+        D9 §3.4/3.6 fusionadas (autorización R6, 22-08-2026): además del
+        evento agregado de siempre (`DIVERGENCIA_ORACULO`, solo cuando
+        difieren), añade SIEMPRE un registro de residuo de la pata PROP --
+        es la única pata que esta salida conoce (el hedge se cierra aparte,
+        `_aplana_hasta_confirmar`, sin oráculo propio). `desviacion_ticks`
+        solo existe cuando hubo un nivel PEDIDO de verdad (objetivo/suelo,
+        órdenes en reposo con precio) -- una salida a mercado por campana no
+        tiene precio pedido que comparar (R2: no se inventa uno)."""
+        cfg = config.obtener()
+        tick_puntos = cfg.hedge_broker.tick_usd.valor() / cfg.hedge_broker.valor_punto_usd.valor()
+        det = self.adaptador.leer_fill_detalle(order_id)
+        desviacion_ticks = ((fill_obtenido - nivel_pedido) / tick_puntos
+                             if nivel_pedido is not None else None)
+        self.eventos.append(dict(
+            tipo='residuo_operacion', pata='prop', tipo_salida=tipo_salida, tipo_orden=tipo_orden,
+            nivel_pedido=nivel_pedido, fill_obtenido=fill_obtenido, desviacion_ticks=desviacion_ticks,
+            m=det_diagnostico.m, contratos=k, order_id=order_id,
+            feed_origen=det['feed_origen'], ts_feed=det['ts_feed'],
+            ts_feed_motivo=det['ts_feed_motivo'], ts_decision=ts_decision,
+            ts_orden=det['ts_orden'], ts_fill_broker=det['ts_fill_broker'],
+            ts_fill_broker_motivo=det['ts_fill_broker_motivo'],
+            ts_fill_recibido=det['ts_fill_recibido'],
+            ts_fill_recibido_motivo=det['ts_fill_recibido_motivo']))
         if det_diagnostico.resuelto:
             dx_teorico = det_diagnostico.resultado['dx_puntos']
             if abs(dx_teorico - dx_real) > 1e-6:
@@ -444,6 +479,10 @@ class MaquinaEnVivo:
         ndn, nu = plan_resultado['ndn'], plan_resultado['nu']
         precio_stop_real = _refleja_escalar(p0_real - ndn, p0_real, self.direccion)
         precio_limite_real = _refleja_escalar(p0_real + nu, p0_real, self.direccion)
+        # D9 §3.4/3.6: se guardan como atributo -- avanza_barra() (método
+        # aparte de éste) los necesita como 'nivel pedido' del residuo.
+        self._precio_stop_real = precio_stop_real
+        self._precio_limite_real = precio_limite_real
         intent_bracket = self._intent_id('bracket')
         bracket = IO.resultado_de(self.ruta_ordenes, intent_bracket)
         if bracket is None:
@@ -508,6 +547,7 @@ class MaquinaEnVivo:
         if ganadora is not None:
             # una pata llenó -- cancela la hermana (defensa idempotente de
             # respaldo, D8.2) y cierra SOLO el hedge (la prop ya se cerró sola).
+            ts_decision = self.reloj()   # D9 §3.4/3.6: el instante en que el bot vio LLENA
             oid_ganadora = self._oid_stop if ganadora == 'stop' else self._oid_lim
             oid_perdedora = self._oid_lim if ganadora == 'stop' else self._oid_stop
             self.adaptador.cancelar(oid_perdedora)
@@ -519,13 +559,19 @@ class MaquinaEnVivo:
                                                           low=(ganadora == 'stop'),
                                                           tgt=(ganadora == 'limite'),
                                                           barra_evento=self._barra_actual)
-            self._registra_divergencia(dx_real)
+            nivel_pedido = self._precio_stop_real if ganadora == 'stop' else self._precio_limite_real
+            self._registra_divergencia(
+                dx_real, tipo_salida=('suelo' if ganadora == 'stop' else 'objetivo'),
+                tipo_orden=('stop' if ganadora == 'stop' else 'limite'), nivel_pedido=nivel_pedido,
+                fill_obtenido=precio_fill_real, order_id=oid_ganadora, k=self._plan['k'],
+                ts_decision=ts_decision)
             self.estado = 'RESUELTO'
             return self.estado
 
         if barra is None or (barra_usable and barra.es_ultima_barra_operable):
             # ninguna pata llenó antes de la campana -- cancela el grupo y
             # cierra a mercado (mismo camino que el modelo, "ninguno toca").
+            ts_decision = self.reloj()   # D9 §3.4/3.6: el instante en que el bot vio la campana
             self.adaptador.cancelar(self._oid_stop)
             oid_cierre_prop = self.adaptador.aplanar(self.cuenta_prop, self.instrumento_prop)
             DP._poll_hasta(self.adaptador, oid_cierre_prop, DP.ESTADOS_TERMINALES, None,
@@ -537,7 +583,10 @@ class MaquinaEnVivo:
             dx_real = _refleja_escalar(precio_cierre_real, self._p0_real, self.direccion) - self._p0_real
             self.resultado = self._resuelve_con_formula(self._plan['k'], dx_real, low=False,
                                                           tgt=False, barra_evento=self._barra_actual)
-            self._registra_divergencia(dx_real)
+            self._registra_divergencia(dx_real, tipo_salida='campana', tipo_orden='mercado',
+                                        nivel_pedido=None, fill_obtenido=precio_cierre_real,
+                                        order_id=oid_cierre_prop, k=self._plan['k'],
+                                        ts_decision=ts_decision)
             self.estado = 'RESUELTO'
             return self.estado
 
@@ -554,9 +603,26 @@ class MaquinaEnVivo:
         det_calculo._cierra(dx_real, low=low, tgt=tgt, barra_evento=barra_evento)
         return det_calculo.resultado
 
-    def _registra_divergencia(self, dx_real):
-        """Oráculo de diagnóstico -- ver el método homónimo de
-        `ResuelveDiaEnVivo`, misma lógica."""
+    def _registra_divergencia(self, dx_real, tipo_salida, tipo_orden, nivel_pedido,
+                               fill_obtenido, order_id, k, ts_decision):
+        """Oráculo de diagnóstico + residuo de la pata prop -- ver el método
+        homónimo de `ResuelveDiaEnVivo`, misma lógica (D9 §3.4/3.6
+        fusionadas)."""
+        cfg = config.obtener()
+        tick_puntos = cfg.hedge_broker.tick_usd.valor() / cfg.hedge_broker.valor_punto_usd.valor()
+        det = self.adaptador.leer_fill_detalle(order_id)
+        desviacion_ticks = ((fill_obtenido - nivel_pedido) / tick_puntos
+                             if nivel_pedido is not None else None)
+        self.eventos.append(dict(
+            tipo='residuo_operacion', pata='prop', tipo_salida=tipo_salida, tipo_orden=tipo_orden,
+            nivel_pedido=nivel_pedido, fill_obtenido=fill_obtenido, desviacion_ticks=desviacion_ticks,
+            m=self._det.m, contratos=k, order_id=order_id,
+            feed_origen=det['feed_origen'], ts_feed=det['ts_feed'],
+            ts_feed_motivo=det['ts_feed_motivo'], ts_decision=ts_decision,
+            ts_orden=det['ts_orden'], ts_fill_broker=det['ts_fill_broker'],
+            ts_fill_broker_motivo=det['ts_fill_broker_motivo'],
+            ts_fill_recibido=det['ts_fill_recibido'],
+            ts_fill_recibido_motivo=det['ts_fill_recibido_motivo']))
         if self._det.resuelto:
             dx_teorico = self._det.resultado['dx_puntos']
             if abs(dx_teorico - dx_real) > 1e-6:

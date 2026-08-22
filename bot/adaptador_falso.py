@@ -275,6 +275,40 @@ class AdaptadorFalso:
         self._avanza(o)
         return o['estado'] == 'LLENA', o['cantidad_llenada'], o['precio_medio']
 
+    def leer_fill_detalle(self, order_id):
+        """07_ADAPTADOR_NT8.md §1 (D9 §3.4/3.6 fusionadas, autorización R6):
+        la cadena de trazabilidad completa de UNA orden -- la que hace falta
+        para poder distinguir "el precio se movió" (deslizamiento) de "la
+        noticia llegó tarde" (retraso), que `leer_fill()` por sí solo no
+        puede separar. Aditivo: `leer_fill()` NO se toca (ver docstring de
+        más arriba), este es un método nuevo del puerto, no un reemplazo.
+
+        Devuelve un dict con `feed_origen`, `ts_orden`, `ts_fill_broker`,
+        `ts_fill_recibido` -- y `ts_feed` (aquí SIEMPRE `None`: este
+        simulador no modela un feed de mercado independiente del propio
+        bróker, solo el ciclo de vida de una orden). La regla que hace esto
+        compatible con R2 (sin excepciones, revisión operador): un campo
+        que este adaptador NO PUEDA dar de verdad es `None` con su propio
+        `..._motivo` explícito -- nunca un valor sustituido, nunca una
+        estimación, nunca este mismo reloj haciéndose pasar por el reloj
+        del feed o del bróker. El adaptador NT8 real, cuando exista, deberá
+        cumplir el mismo contrato (documentado en 07_ADAPTADOR_NT8.md §1) --
+        con motivos distintos si a él SÍ le falta algún campo por otra
+        razón (p.ej. la ATI no expone el timestamp del feed)."""
+        o = self.ordenes[order_id]
+        self._avanza(o)
+        llena = o['estado'] == 'LLENA'
+        return dict(
+            feed_origen=o['cuenta'],
+            ts_feed=None,
+            ts_feed_motivo='adaptador_falso_no_simula_feed_de_mercado_independiente',
+            ts_orden=o['ts_creacion'],
+            ts_fill_broker=(o.get('ts_fill') if llena else None),
+            ts_fill_broker_motivo=(None if llena else 'orden_todavia_no_llena'),
+            ts_fill_recibido=(self.reloj() if llena else None),
+            ts_fill_recibido_motivo=(None if llena else 'orden_todavia_no_llena'),
+        )
+
     def leer_posicion(self, cuenta, instrumento):
         cantidad = self.posiciones.get((cuenta, instrumento), 0)
         return cantidad, (100.0 if cantidad else None)
@@ -316,6 +350,12 @@ class AdaptadorFalso:
         o['estado'] = 'LLENA'
         o['cantidad_llenada'] = o['cantidad']
         o['precio_medio'] = self._comportamiento.get(o['order_id'], {}).get('precio_fill', precio)
+        # D9 §3.4/3.6 fusionadas: `ts_fill` es "según el bróker" -- en este
+        # simulador el único reloj que existe es el suyo, así que este es el
+        # instante más fiel posible (un adaptador NT8 real lo sacaría del
+        # propio evento de ejecución de la ATI, no de este reloj). Ver
+        # `leer_fill_detalle()`.
+        o['ts_fill'] = self.reloj()
         clave = (o['cuenta'], o['instrumento'])
         self.posiciones[clave] = self.posiciones.get(clave, 0) + o['direccion'] * o['cantidad']
         self.eventos.append(('LLENA', o['order_id'], self.posiciones[clave]))

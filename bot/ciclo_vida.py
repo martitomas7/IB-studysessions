@@ -147,11 +147,12 @@ def arma_intento_eval(eval_estado, pool_estado, caja_delta, eventos, qok,
                      caja_delta=caja_delta, eventos=eventos)
 
     friccion = spr * m_eval
-    plan = sizing.plan(bal=ev["bal"], pico=ev["pico"], G=max(ev["s0"], 0.0) + b_eval, H=ev["H"],
+    G = max(ev["s0"], 0.0) + b_eval
+    plan = sizing.plan(bal=ev["bal"], pico=ev["pico"], G=G, H=ev["H"],
                         fric=friccion, m=m_eval, EXP=exp_eval, T=T_eval, dcap=1e18, kcap=kcap)
     return dict(arranca=True, eval_estado=ev, pool_estado=pool, caja_delta=caja_delta,
                 eventos=eventos, plan=plan, m=m_eval, friccion=friccion,
-                deslizamiento=slip_micro * m_eval)
+                deslizamiento=slip_micro * m_eval, G=G)
 
 
 def arma_empalme_eval(eval_estado, pool_estado, caja_delta, eventos, dia_previo,
@@ -204,16 +205,17 @@ def arma_empalme_eval(eval_estado, pool_estado, caja_delta, eventos, dia_previo,
               aprobada_provisional=False, aprobada_confirmada=False)
     b0_empalme = dia_previo["barra_evento"]
     friccion_empalme = spr * m_eval * empalme_factor
-    plan2 = sizing.plan(bal=0.0, pico=0.0, G=max(cuota, 0.0) + b_eval, H=0.0,
+    G_empalme = max(cuota, 0.0) + b_eval
+    plan2 = sizing.plan(bal=0.0, pico=0.0, G=G_empalme, H=0.0,
                          fric=friccion_empalme, m=m_eval, EXP=exp_eval, T=T_eval,
                          dcap=1e18, kcap=kcap)
     return dict(arranca=True, eval_estado=ev, pool_estado=pool, caja_delta=caja_delta,
                 eventos=eventos, plan=plan2, m=m_eval, friccion=friccion_empalme,
-                deslizamiento=slip_micro * m_eval, b0=b0_empalme)
+                deslizamiento=slip_micro * m_eval, b0=b0_empalme, G=G_empalme)
 
 
 def cierra_resolucion_eval(eval_estado, pool_estado, caja_delta, hubo_muerte, eventos,
-                            dia, plan, cuota, rebuy_on, modo_auto_confirma, m_eval):
+                            dia, plan, cuota, rebuy_on, modo_auto_confirma, m_eval, G, fric):
     """POST-mercado de UN intento ya resuelto (sirve tanto para el intento 0
     como para el empalme -- la propia función NO decide si intentar un
     empalme, solo señala `quiere_intentar_empalme`; decidir CUÁNDO
@@ -221,6 +223,11 @@ def cierra_resolucion_eval(eval_estado, pool_estado, caja_delta, hubo_muerte, ev
     por día", vive en el llamador, `procesa_dia_eval`/D8.4). Extraído SIN
     CAMBIOS de pipeline3.py:337-368 (intento 0) / 375-387 (empalme, mismo
     bloque).
+
+    `G`/`fric` (D9 §3.6, autorización R6, 22-08-2026): las ENTRADAS que
+    `arma_intento_eval`/`arma_empalme_eval` le pasaron a `sizing.plan()`
+    para armar `plan` -- se persisten tal cual, sin recalcularlas aquí
+    (R6: la fórmula de `den`/`fl`/`k0`/`k1` vive solo en `sizing.py`).
 
     Devuelve dict(eval_estado, pool_estado, sunk_a_recamara, caja_delta,
     hubo_muerte, eventos, bloqueo, quiere_intentar_empalme)."""
@@ -234,6 +241,18 @@ def cierra_resolucion_eval(eval_estado, pool_estado, caja_delta, hubo_muerte, ev
     ev["pico"] = max(ev["pico"], ev["bal"])
     ev["k"] = plan["k"]           # recomendación 5: persistir k/m del día -- el
     ev["m"] = m_eval               # dashboard no debe RECALCULAR, solo mostrar lo usado
+    # D9 §3.6: persistir las ENTRADAS de sizing.plan() de HOY -- diagnóstico
+    # puro, nunca leído para decidir nada (misma invariante que k/m de
+    # arriba). `sizing_H` se lee de `eval_estado` (el PARÁMETRO, todavía sin
+    # mutar por la línea de `ev["H"] +=` de más arriba) porque ese es
+    # exactamente el valor que ya recibió `sizing.plan()` -- nunca el H de
+    # DESPUÉS de sumar el hedge_dolares de hoy. Ver
+    # verificacion_R3/prueba_persistencia_sizing.py para la aserción
+    # explícita que exige que esto no diverja en una refactorización futura.
+    ev["sizing_G"] = G
+    ev["sizing_H"] = eval_estado["H"]
+    ev["sizing_fric"] = fric
+    ev["sizing_Mm"] = plan["Mm"]
     hubo_muerte = hubo_muerte or dia["muere"]
     if dia["muere"]:
         eventos["muertes_eval"] += 1
@@ -353,7 +372,7 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
                         m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
     r = cierra_resolucion_eval(arm["eval_estado"], arm["pool_estado"], arm["caja_delta"], False,
                                 arm["eventos"], dia, arm["plan"], cuota, rebuy_on,
-                                modo_auto_confirma, m_eval)
+                                modo_auto_confirma, m_eval, arm["G"], arm["friccion"])
 
     if not r["quiere_intentar_empalme"]:
         return dict(eval_estado=r["eval_estado"], pool_estado=r["pool_estado"],
@@ -375,7 +394,7 @@ def procesa_dia_eval(eval_estado, pool_estado, recamara_dormidas, direccion,
                          m=arm2["m"], fric=arm2["friccion"], deslizamiento=arm2["deslizamiento"])
     r2 = cierra_resolucion_eval(arm2["eval_estado"], arm2["pool_estado"], arm2["caja_delta"],
                                  r["hubo_muerte"], arm2["eventos"], dia2, arm2["plan"], cuota,
-                                 rebuy_on, modo_auto_confirma, m_eval)
+                                 rebuy_on, modo_auto_confirma, m_eval, arm2["G"], arm2["friccion"])
     ev2 = dict(r2["eval_estado"])
     if r2["quiere_intentar_empalme"]:   # maximo 1 empalme/dia -- no se reintenta
         ev2["activa"] = False
@@ -499,16 +518,20 @@ def arma_intento_funded(funded_estado):
     plan = sizing.plan(bal=fu["bal"], pico=fu["pico"], G=G, H=fu["H"], fric=friccion,
                         m=m_fun, EXP=exp_fun, T=T_c, dcap=D_c, kcap=kcap)
     return dict(plan=plan, m=m_fun, friccion=friccion, deslizamiento=slip_micro * m_fun,
-                T_c=T_c, W_c=W_c, D_c=D_c, fase=fase)
+                T_c=T_c, W_c=W_c, D_c=D_c, fase=fase, G=G)
 
 
-def cierra_resolucion_funded(funded_estado, caja_delta, dia, plan, T_c, W_c, fase, m_fun):
+def cierra_resolucion_funded(funded_estado, caja_delta, dia, plan, T_c, W_c, fase, m_fun, G, fric):
     """POST-mercado de la sesión de funded ya resuelta -- extraído SIN
     CAMBIOS de pipeline3.py:277-296.
 
     `n_ciclos`/`dias_min_eval`/`relevo_dias` se leen de config aquí dentro
     (memoizado, coste nulo) en vez de threadearlos como parámetros --
     igual que `cierra_resolucion_eval` recalcula `T_eval`.
+
+    `G`/`fric` (D9 §3.6, autorización R6, 22-08-2026): ver el docstring
+    homónimo de `cierra_resolucion_eval` -- misma persistencia, mismo
+    principio (entradas de `sizing.plan()`, no un intermedio recalculado).
 
     Devuelve dict(funded_estado, caja_delta, hubo_muerte, toco_ciclo,
     cerro_linaje, eventos, bloqueo) -- misma forma que devolvía
@@ -528,6 +551,12 @@ def cierra_resolucion_funded(funded_estado, caja_delta, dia, plan, T_c, W_c, fas
     fu["dias"] += 1
     fu["k"] = plan["k"]    # recomendación 5: persistir k/m del día, no recalcular en el dashboard
     fu["m"] = m_fun
+    # D9 §3.6: mismo principio que cierra_resolucion_eval -- `sizing_H` sale
+    # de `funded_estado` (el parámetro, sin mutar por `fu["H"] +=` de arriba).
+    fu["sizing_G"] = G
+    fu["sizing_H"] = funded_estado["H"]
+    fu["sizing_fric"] = fric
+    fu["sizing_Mm"] = plan["Mm"]
 
     cerro_linaje = False
     toco_ciclo = False
@@ -585,4 +614,4 @@ def procesa_dia_funded(funded_estado, direccion, ph, pl, pc, b0v, es_dia_nuevo,
     dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=arm["plan"],
                         m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
     return cierra_resolucion_funded(funded_estado, 0.0, dia, arm["plan"], arm["T_c"],
-                                     arm["W_c"], arm["fase"], arm["m"])
+                                     arm["W_c"], arm["fase"], arm["m"], arm["G"], arm["friccion"])

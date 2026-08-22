@@ -51,6 +51,7 @@ Cualquier camino (A/B/C, §2) tiene que poder implementar exactamente esto:
 | `cancelar(order_id)` | `order_id` | confirmación, veraz | solo aplica a órdenes no llenas: **idempotente y veraz sobre el estado terminal real** — si `order_id` ya está `LLENA`, devuelve `LLENA`, nunca fabrica `CANCELADA` sobre una orden que de hecho se ejecutó (contrato ya vigente, precisado por escrito en la revisión 5). Cuando `order_id` pertenece a un grupo OCO creado por `coloca_bracket()`, cancelar CUALQUIERA de las dos patas cancela el GRUPO COMPLETO — nunca deja una pata huérfana viva. |
 | `leer_posicion(cuenta, instrumento)` | cuenta, instrumento | cantidad neta, precio medio de entrada | insumo de la reconciliación de arranque (§6) |
 | `leer_fill(order_id)` | `order_id` | lleno (bool), cantidad llenada, precio medio | por sondeo, no por evento — ver §4 |
+| `leer_fill_detalle(order_id)` | `order_id` | ver tabla de abajo | D9 §3.4/3.6 fusionadas (autorización R6, 22-08-2026) — aditivo, `leer_fill()` no se toca |
 | `leer_estado_orden(order_id)` | `order_id` | enviada / aceptada / parcial / llena / rechazada / cancelada | §4 |
 | `hay_conexion(cuenta)` | cuenta | bool | se comprueba antes de cada operación; nunca se asume |
 | `leer_cuenta(cuenta)` | cuenta | caja, PnL realizado, poder de compra | diagnóstico y alertas; el sizing real vive en `estado.json`, no aquí |
@@ -59,6 +60,36 @@ Cualquier camino (A/B/C, §2) tiene que poder implementar exactamente esto:
 **Regla de dependencias (Arquitectura §2):** `adaptadores/` no importa `ciclo_vida` ni `tesoreria`, y no
 decide nada — solo traduce. Si en algún momento el código del adaptador contiene una condición sobre
 `s₀`, `B`, o cualquier otro símbolo de la norma, está en el módulo equivocado.
+
+### 1.1 · `leer_fill_detalle(order_id)` — la cadena de trazabilidad de un fill
+
+Añadida por la fusión de D9 §3.4 ("origen del feed + 2 marcas de tiempo por precio") y §3.6 (el
+residuo diario operación a operación, `verificacion_R3/`): para poder **distinguir deslizamiento de
+retraso** en el residuo hace falta la cadena entera, no solo el precio de fill. Método nuevo del
+puerto, aditivo — `leer_fill()` sigue devolviendo exactamente lo mismo de siempre.
+
+| campo | qué es |
+|---|---|
+| `feed_origen` | identidad del feed del que salió el precio que disparó la decisión (hoy: la cuenta — prop o hedge — sobre la que se abrió la orden) |
+| `ts_feed` | marca de tiempo **del feed** de ese precio |
+| `ts_orden` | cuándo se mandó la orden (`ts_creacion` de la orden, ya existía internamente) |
+| `ts_fill_broker` | cuándo llenó, según el bróker |
+| `ts_fill_recibido` | cuándo se enteró el bot (el instante del propio sondeo que ve `LLENA`) |
+
+(`ts_decision` — cuándo decidió el bot — NO sale de aquí: el adaptador no puede saberlo. Vive en el
+punto de emisión que sí lo sabe, `bot/protocolo_dos_patas.py`/`bot/resolucion_en_vivo.py`.)
+
+**La regla que hace esto compatible con R2, sin excepciones:** si un adaptador no puede suministrar un
+campo, devuelve `None` con un `<campo>_motivo` explícito — nunca un valor sustituido, nunca una
+estimación, nunca el reloj local haciéndose pasar por el reloj del feed o del bróker. Un `None` con
+motivo es un dato; un valor inventado no lo es. `AdaptadorFalso` (el simulador de pruebas) no modela un
+feed de mercado independiente del propio bróker: su `ts_feed` es **siempre** `None` con motivo
+`'adaptador_falso_no_simula_feed_de_mercado_independiente'` — no porque falte implementarlo, sino
+porque en un simulador en memoria esa distinción no existe. El adaptador NT8 real, cuando exista,
+deberá cumplir el mismo contrato; si a él le falta algún campo será por una razón distinta (p.ej. la
+ATI no expone el timestamp propio del feed) y deberá documentar su propio motivo, nunca reusar el de
+`AdaptadorFalso`. El agregador del residuo debe **negarse** a calcular latencia/deslizamiento con
+campos `None` — igual que ya se niega a calcular `spr_usd` con registros `NO_VALIDA` (D9 §3.3).
 
 > **El instrumento es MES en las DOS patas, sin excepción — escríbelo explícito, no lo dejes
 > abstracto.** La norma calcula `pv = 5·k` (R-2.5) y `03_CONFIG.yaml → hedge_broker.valor_punto_usd`

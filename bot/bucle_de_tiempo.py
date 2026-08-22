@@ -27,7 +27,7 @@ propia sesión de hoy es imposible en vivo). Esto es un defecto conocido y
 medido, no un bug: afecta a 1/504 días del pack, -49,74 $ acumulados
 (-0,17 %) -- ver `RESPUESTA_D8_CONCURRENCIA.md` §2 y §5, y el registro en
 `03_CONFIG.yaml` (pendientes) / `modelo/DEFECTOS_CONOCIDOS.md`."""
-from bot import config, comandos
+from bot import config, comandos, residuo_diario
 from bot import ciclo_vida as CV
 from bot.resolucion_en_vivo import MaquinaEnVivo
 
@@ -64,6 +64,18 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
 
     maquinas = {}   # 'funded' | 'eval' -> MaquinaEnVivo VIGENTE ahora mismo
     contexto = {}   # 'funded' | 'eval' -> el dict de arma_intento_*/arma_empalme_eval en curso
+    barra_inicio_de = {}   # 'funded' | 'eval' -> barra_inicio DEL INTENTO VIGENTE (D9 §3.6)
+    # D9 §3.6 (autorización R6, 22-08-2026): la secuencia CRUDA (sin
+    # reflejar) de barras que este día sirvió `fuente_barras` de verdad --
+    # capturada UNA sola vez aquí, en el bucle de tiempo compartido, que es
+    # el único sitio con acceso a la barra cruda antes de que cada máquina
+    # la refleje por su cuenta (`_refleja_bar`, anclado en su propio
+    # `p0_real` de slot). `fuente_barras.abre_dia()` ya dejó el cursor en
+    # -1 antes de llegar aquí (bot/fuente_barras.py), así que la barra
+    # b=0 es la PRIMERA que se ve en este bucle -- append() en orden basta
+    # para que el índice de la lista coincida con `barra.b`, exactamente lo
+    # que `sesion.resolver_dia()` espera indexar.
+    barras_reales_ph, barras_reales_pl, barras_reales_pc = [], [], []
 
     if st["funded"]["activa"]:
         arm_f = CV.arma_intento_funded(st["funded"])
@@ -71,6 +83,7 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
         m.abre(b0v, arm_f['plan'], arm_f['m'], arm_f['friccion'], arm_f['deslizamiento'])
         maquinas['funded'] = m
         contexto['funded'] = arm_f
+        barra_inicio_de['funded'] = b0v
 
     eventos_cero = dict(intentos=0, aprobaciones=0, emergencias=0, recompras=0, muertes_eval=0)
     arm_e = CV.arma_intento_eval(st["eval"], st["pool"], 0.0, eventos_cero, qok,
@@ -84,6 +97,7 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
         m.abre(b0v, arm_e['plan'], arm_e['m'], arm_e['friccion'], arm_e['deslizamiento'])
         maquinas['eval'] = m
         contexto['eval'] = arm_e
+        barra_inicio_de['eval'] = b0v
     else:
         r_eval_final = dict(eval_estado=arm_e['eval_estado'], pool_estado=st['pool'],
                              sunk_a_recamara=None, caja_delta=arm_e['caja_delta'], hubo_muerte=False,
@@ -94,6 +108,10 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
     #     concurrencia (ninguna espera a que la otra acabe su día entero).
     while any(m.estado == 'VIGILANDO' for m in maquinas.values()):
         barra = fuente_barras.siguiente_barra()
+        if barra is not None:
+            barras_reales_ph.append(barra.ph)
+            barras_reales_pl.append(barra.pl)
+            barras_reales_pc.append(barra.pc)
         for m in list(maquinas.values()):
             if m.estado == 'VIGILANDO':
                 m.avanza_barra(barra)
@@ -104,7 +122,8 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
             r = CV.cierra_resolucion_eval(arm_actual['eval_estado'], st['pool'],
                                            arm_actual['caja_delta'], eval_hubo_muerte_previa,
                                            arm_actual['eventos'], m_eval.resultado, arm_actual['plan'],
-                                           cuota, rebuy_on, modo_auto_confirma, arm_actual['m'])
+                                           cuota, rebuy_on, modo_auto_confirma, arm_actual['m'],
+                                           arm_actual['G'], arm_actual['friccion'])
             st['pool'] = r['pool_estado']
             if not r['quiere_intentar_empalme']:
                 r_eval_final = r
@@ -129,6 +148,7 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
                                arm_emp['deslizamiento'])
                     maquinas['eval'] = nueva
                     contexto['eval'] = arm_emp
+                    barra_inicio_de['eval'] = arm_emp['b0']   # D9 §3.6: el intento vigente cambió de b0
                     contexto['eval_bloqueo_dia'] = r['bloqueo']   # el reportado es SIEMPRE el del intento 0
                     eval_intento_siguiente += 1
                     eval_hubo_muerte_previa = r['hubo_muerte']
@@ -146,7 +166,7 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
         r2 = CV.cierra_resolucion_eval(arm_actual['eval_estado'], st['pool'], arm_actual['caja_delta'],
                                         eval_hubo_muerte_previa, arm_actual['eventos'], m_eval.resultado,
                                         arm_actual['plan'], cuota, rebuy_on, modo_auto_confirma,
-                                        arm_actual['m'])
+                                        arm_actual['m'], arm_actual['G'], arm_actual['friccion'])
         st['pool'] = r2['pool_estado']
         ev2 = dict(r2['eval_estado'])
         if r2['quiere_intentar_empalme']:   # máximo 1 empalme/día -- no se reintenta
@@ -164,6 +184,26 @@ def resuelve_dia_concurrente(st, direccion, b0v, qok, modo_auto_confirma,
         # igual que hacía procesa_dia_funded con su variable local.
         r_funded = CV.cierra_resolucion_funded(st['funded'], 0.0, maquinas['funded'].resultado,
                                                 arm_f['plan'], arm_f['T_c'], arm_f['W_c'],
-                                                arm_f['fase'], arm_f['m'])
+                                                arm_f['fase'], arm_f['m'], arm_f['G'], arm_f['friccion'])
+
+    # D9 §3.6 (autorización R6, 22-08-2026): el residuo diario, por slot --
+    # se añade a `eventos` (la MISMA lista que ya hila la Capa B de
+    # bot/bucle_del_dia.py, sin cambiar la firma de retorno de esta
+    # función). Solo si el bucle de barras llegó a correr de verdad: un día
+    # con las DOS cuentas bloqueadas desde `abre()` (p.ej. el día 210 del
+    # pack, ya conocido) nunca entra en el `while` de arriba, así que
+    # `barras_reales_pc` queda vacía -- `sesion.resolver_dia()` indexaría
+    # `pc[-1]` de una lista vacía. Se documenta el hueco en vez de fingir
+    # un residuo (todo-ceros) que no se puede demostrar sin barras.
+    if barras_reales_pc:
+        for slot, maquina in maquinas.items():
+            residuo = residuo_diario.residuo_dia_desde_barras_reales(
+                barras_reales_ph, barras_reales_pl, barras_reales_pc, direccion,
+                barra_inicio_de[slot], contexto[slot]['plan'], contexto[slot]['m'],
+                contexto[slot]['friccion'], contexto[slot]['deslizamiento'], maquina.resultado)
+            eventos.append(dict(tipo='residuo_dia', slot=slot, **residuo))
+    elif maquinas:
+        eventos.append(dict(tipo='residuo_dia_omitido', slots=sorted(maquinas),
+                             motivo='sin_barras_capturadas_hoy_dia_bloqueado_desde_abre'))
 
     return r_funded, r_eval_final

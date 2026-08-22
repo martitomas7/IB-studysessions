@@ -37,11 +37,33 @@ def _escribe_linea_diario(ruta_diario, diario):
         fh.write(json.dumps(diario) + "\n")
 
 
+def _escribe_eventos_residuo(dir_residuo, dia_negociacion, eventos):
+    """D9 §3.6 (autorización R6, 22-08-2026, Capa B): un fichero JSONL por
+    día, `residuo/eventos_<dia_negociacion>.jsonl` -- una línea por evento
+    (`divergencia_fill`, `residuo_operacion`, `DIVERGENCIA_ORACULO`,
+    `residuo_dia`/`residuo_dia_omitido`, ...). Deliberadamente un directorio
+    NUEVO, `residuo/`, separado de `laboratorio/` (08_LABORATORIO.md §2):
+    productor distinto -- `laboratorio/` lo escribe el indicador NT8 del
+    lado del mercado; esto lo escribe el propio bot, del lado de su
+    ejecución. Fusionar los dos en un futuro es una decisión del operador,
+    no algo que este delta deba decidir por su cuenta.
+
+    Solo se llama para un día que de verdad pasó por el bucle de tiempo
+    concurrente (`resuelve_concurrente is not None`, ver el llamador) --
+    un día puramente REPLAY nunca rellena `eventos_hoy`, así que no genera
+    ningún fichero (nada que persistir, nada que fingir)."""
+    os.makedirs(dir_residuo, exist_ok=True)
+    ruta = os.path.join(dir_residuo, f"eventos_{dia_negociacion:04d}.jsonl")
+    with open(ruta, 'w', encoding='utf-8') as fh:
+        for ev in eventos:
+            fh.write(json.dumps(ev) + "\n")
+
+
 def bucle_del_dia(fuente_barras, adaptador,
                    cuenta_hedge_eval, cuenta_prop_eval, cuenta_hedge_funded, cuenta_prop_funded,
                    instrumento_prop, ruta_estado, ruta_nivel, ruta_ordenes, ruta_lock,
                    dir_instantaneas, dias_retenidos, ruta_diario,
-                   modo_auto_confirma=True, rng=None, reloj=None, dormir=None):
+                   modo_auto_confirma=True, rng=None, reloj=None, dormir=None, dir_residuo=None):
     """El bucle único de D8.4. `fuente_barras` (`bot/fuente_barras.py`) y
     `adaptador` (puerto de `07_ADAPTADOR_NT8.md` §1) son los DOS puertos
     de §0 -- todo lo demás (nombres de cuenta, rutas de persistencia) es
@@ -58,6 +80,17 @@ def bucle_del_dia(fuente_barras, adaptador,
     `sesion.resolver_dia` sin construir nada nuevo (pasando
     `resuelve_dia_eval=None`/`resuelve_dia_funded=None` a `procesa_dia()`,
     que usa su propio default).
+
+    `dir_residuo` (D9 §3.6, autorización R6, 22-08-2026, Capa B): opcional,
+    `None` por defecto -- si se pasa, cada día que corre por el bucle de
+    tiempo concurrente vuelca sus `eventos_hoy` (divergencia_fill,
+    residuo_operacion, DIVERGENCIA_ORACULO, residuo_dia/residuo_dia_omitido)
+    a `dir_residuo/eventos_<dia>.jsonl`. `None` preserva el comportamiento
+    de siempre (no escribe nada) -- deliberado: los nueve arneses de R3 que
+    ya llaman a esta función se escribieron antes de que esto existiera, y
+    forzarles un directorio que no necesitan no aporta nada; solo el
+    arnés dedicado de esta pieza (`verificacion_R3/prueba_residuo_operacion.py`)
+    lo pasa de verdad.
 
     Devuelve el `st` final, o `None` si `estado.json` está corrupto (ya
     reaccionado a N4 antes de devolver)."""
@@ -125,6 +158,18 @@ def bucle_del_dia(fuente_barras, adaptador,
             ctx = fuente_barras.abre_dia()
             resuelve_eval = resuelve_funded = None   # None -> procesa_dia() usa sesion.resolver_dia
             resuelve_concurrente = None               # solo se liga en el camino EN VIVO, ver abajo
+            # D9 §3.6 (autorización R6, 22-08-2026, Capa B): la lista que
+            # `bot/protocolo_dos_patas.py`/`bot/resolucion_en_vivo.py` ya
+            # rellenan (divergencia_fill, DIVERGENCIA_ORACULO, residuo_dia,
+            # ...) se creaba y se descartaba cada día -- nunca llegaba a
+            # ningún sitio porque `resuelve_concurrente` no la recibía. Se
+            # crea aquí y se liga como `eventos=` en las DOS construcciones
+            # de abajo; al ser una lista MUTABLE, queda rellena cuando
+            # `orquestador.procesa_dia()` la use más abajo -- sin que
+            # `bucle_de_tiempo.resuelve_dia_concurrente()` tenga que
+            # devolverla (ver su propio comentario: "sin cambiar la firma
+            # de retorno").
+            eventos_hoy = []
 
             if ctx.direccion is not None and not ctx.resolucion_en_vivo:
                 # REPLAY: todo forzado desde el pack, exactamente como hacía
@@ -154,7 +199,8 @@ def bucle_del_dia(fuente_barras, adaptador,
                     cuenta_hedge_eval=cuenta_hedge_eval, cuenta_prop_eval=cuenta_prop_eval,
                     cuenta_hedge_funded=cuenta_hedge_funded, cuenta_prop_funded=cuenta_prop_funded,
                     instrumento_prop=instrumento_prop, ruta_ordenes=ruta_ordenes,
-                    ruta_nivel=ruta_nivel, dia_negociacion=dia_de_hoy, reloj=reloj, dormir=dormir)
+                    ruta_nivel=ruta_nivel, dia_negociacion=dia_de_hoy, eventos=eventos_hoy,
+                    reloj=reloj, dormir=dormir)
             else:
                 # EN VIVO: se sortea de verdad. La dirección de HOY sale de
                 # contra_pendiente YA ACTUALIZADO por procesa_dia() de AYER
@@ -188,12 +234,16 @@ def bucle_del_dia(fuente_barras, adaptador,
                     cuenta_hedge_eval=cuenta_hedge_eval, cuenta_prop_eval=cuenta_prop_eval,
                     cuenta_hedge_funded=cuenta_hedge_funded, cuenta_prop_funded=cuenta_prop_funded,
                     instrumento_prop=instrumento_prop, ruta_ordenes=ruta_ordenes,
-                    ruta_nivel=ruta_nivel, dia_negociacion=dia_de_hoy, reloj=reloj, dormir=dormir)
+                    ruta_nivel=ruta_nivel, dia_negociacion=dia_de_hoy, eventos=eventos_hoy,
+                    reloj=reloj, dormir=dormir)
 
             st, fin_de_dia, diario = orquestador.procesa_dia(
                 st, direccion, ventana_txt, ph, pl, pc, b0v, n_resets_hoy,
                 resuelve_dia_eval=resuelve_eval, resuelve_dia_funded=resuelve_funded,
                 modo_auto_confirma=modo_auto_confirma, resuelve_concurrente=resuelve_concurrente)
+
+            if dir_residuo is not None and resuelve_concurrente is not None:
+                _escribe_eventos_residuo(dir_residuo, st["dia_negociacion"], eventos_hoy)
 
             # DECISION_DEGRADACION_N3.md (revisión operador 21-08-2026): la
             # degradación (R-7.2) es pegajosa -- nunca se revierte sola -- así

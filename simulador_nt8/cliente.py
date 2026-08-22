@@ -134,6 +134,12 @@ class AdaptadorSimuladorNT8:
         r = self._enviar("leer_fill", {"order_id": order_id})
         return (r["llena"], r["cantidad_llenada"], r["precio_medio"])
 
+    def leer_fill_detalle(self, order_id):
+        """D9 §3.4/3.6 fusionadas -- ver `AdaptadorFalso.leer_fill_detalle()`
+        para el contrato completo. Ya JSON-nativo (dict), sin necesidad de
+        reconstrucción de tupla como `leer_fill()`/`leer_posicion()`."""
+        return self._enviar("leer_fill_detalle", {"order_id": order_id})
+
     def leer_posicion(self, cuenta, instrumento):
         r = self._enviar("leer_posicion", {"cuenta": cuenta, "instrumento": instrumento})
         return (r["cantidad_neta"], r["precio_referencia"])

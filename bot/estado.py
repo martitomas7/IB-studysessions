@@ -108,6 +108,21 @@ def validar(estado, checksum_config_actual):
     if estado["eval"]["aprobada_confirmada"] and not estado["eval"]["aprobada_provisional"]:
         f.append("7: eval.aprobada_confirmada es verdadero sin aprobada_provisional")
 
+    # D9 §3.6 (autorización R6, 22-08-2026): sizing_G/sizing_H/sizing_fric/
+    # sizing_Mm son diagnóstico puro (REVISION_REV5.md §4.3, "sin las
+    # entradas un residuo anómalo no se puede diagnosticar después") --
+    # NUNCA se leen para decidir nada, así que no son uno de los 8
+    # invariantes de Arquitectura §4 propiamente dichos: solo se comprueba
+    # que, SI están presentes, sean numéricos -- TOLERANTE A SU AUSENCIA
+    # (revisión operador, AUTORIZACION_3_6_CERRADA.md §2), para que un
+    # estado.json escrito antes de este cambio siga cargando sin problema.
+    for slot_nombre in ("eval", "funded"):
+        slot = estado[slot_nombre]
+        for clave in ("sizing_G", "sizing_H", "sizing_fric", "sizing_Mm"):
+            if clave in slot and not isinstance(slot[clave], (int, float)):
+                f.append(f"D-6.{slot_nombre}.{clave}: {slot[clave]!r} no es numérico "
+                         f"(diagnóstico de sizing corrupto)")
+
     # 8: "ninguna dormida entra en recamara.dormidas sin aprobada_confirmada" es una
     # invariante de TRANSICIÓN (se comprueba en el momento de añadir, en ciclo_vida.py
     # -- ver `aprobar_eval()`), no una propiedad de una foto de estado ya guardada:

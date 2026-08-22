@@ -127,19 +127,20 @@ _ANCLA_5 = '''    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan
                         m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
     r = cierra_resolucion_eval(arm["eval_estado"], arm["pool_estado"], arm["caja_delta"], False,
                                 arm["eventos"], dia, arm["plan"], cuota, rebuy_on,
-                                modo_auto_confirma, m_eval)'''
+                                modo_auto_confirma, m_eval, arm["G"], arm["friccion"])'''
 _PARCHE_5 = '''    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, plan_resultado=arm["plan"],
                         m=arm["m"], fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
     r = cierra_resolucion_eval(arm["eval_estado"], arm["pool_estado"], arm["caja_delta"], False,
                                 arm["eventos"], dia, arm["plan"], cuota, rebuy_on,
-                                modo_auto_confirma, m_eval)
+                                modo_auto_confirma, m_eval, arm["G"], arm["friccion"])
     # BUG INYECTADO (romper_mi_orquestador.py, D5): el bug de v8 -- una cuenta
     # SUPERVIVIENTE (sin muerte, sin empalme) vuelve a operar una SEGUNDA vez
     # el MISMO dia, sobre el mismo b0v. No debe pasar nunca: sesiones_de_eval
     # debe ser <= 1 + empalmes.
     if not dia["muere"]:
+        G_bug = max(r["eval_estado"]["s0"], 0.0) + cfg.sizing.b_eval_usd.valor()
         plan_bug = sizing.plan(bal=r["eval_estado"]["bal"], pico=r["eval_estado"]["pico"],
-                                G=max(r["eval_estado"]["s0"], 0.0) + cfg.sizing.b_eval_usd.valor(),
+                                G=G_bug,
                                 H=r["eval_estado"]["H"], fric=arm["friccion"], m=m_eval,
                                 EXP=cfg.sizing.exp_eval_usd.valor(),
                                 T=cfg.proveedor.objetivo_eval_usd.valor(), dcap=1e18,
@@ -148,7 +149,7 @@ _PARCHE_5 = '''    dia = resuelve_dia(ph=ph, pl=pl, pc=pc, barra_inicio=b0v, pla
                                 m=m_eval, fric=arm["friccion"], deslizamiento=arm["deslizamiento"])
         r = cierra_resolucion_eval(r["eval_estado"], r["pool_estado"], r["caja_delta"],
                                     r["hubo_muerte"], r["eventos"], dia_bug, plan_bug, cuota,
-                                    rebuy_on, modo_auto_confirma, m_eval)'''
+                                    rebuy_on, modo_auto_confirma, m_eval, G_bug, arm["friccion"])'''
 CASOS.append(('la eval SUPERVIVIENTE opera dos veces (gate D5)', cv_mod, 'procesa_dia_eval',
     _ANCLA_5, _PARCHE_5))
 
