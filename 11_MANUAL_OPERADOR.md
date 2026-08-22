@@ -230,11 +230,21 @@ real** (confirmar `N`/`N_hedge`/`latido_intervalo_s`/`latido_rancio_umbral_s`
 contra el proceso real de Fase 2) necesita datos reales de papel que solo tú
 puedes generar operando — esta sesión no tiene acceso a esa máquina.
 
-Una pregunta abierta, sin contestar todavía por nadie (ni el operador ni esta
-sesión): **si la regla de inactividad de MyFundedFutures también mata
-dormidas en recámara** (no solo funded activa) — verifícalo contra la
-normativa real del proveedor antes de dar por sentado que la recámara está a
-salvo mientras espera semanas sin operar.
+Tres preguntas abiertas, sin contestar todavía por nadie (ni el operador ni
+esta sesión) — `ORDEN_DE_TRABAJO_D9.md` §8: son decisión del operador, esta
+sesión solo las anota:
+
+1. **¿La regla de inactividad de MyFundedFutures también mata dormidas en
+   recámara** (no solo funded activa)? Verifícalo contra la normativa real
+   del proveedor antes de dar por sentado que la recámara está a salvo
+   mientras espera semanas sin operar. **No bloquea F3.1** (una evaluación
+   sola, sin recámara todavía) — bloquea **F3.3**, que es cuando habrá
+   dormidas esperando de verdad.
+2. **Política de bots de Topstep**, por escrito — necesaria antes de
+   considerar Topstep como segundo proveedor (multicuenta, fuera de alcance
+   hasta después de F3.1).
+3. **Carve-out de resets de Tradeify frente al tope de 15 evaluaciones**,
+   por escrito — misma condición que el punto anterior.
 
 ---
 

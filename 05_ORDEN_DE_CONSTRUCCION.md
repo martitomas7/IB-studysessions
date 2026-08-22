@@ -321,15 +321,45 @@ en la tabla de la puerta F3.1 que ya existe (abajo).** No hacen falta bandas nue
 (`03_CONFIG.yaml`) nunca suben los dos a la vez. Mientras `spr_usd` cargue la fricción
 (como hoy), el eje de ticks se queda en `valor: 0.0`.
 
-**Nota abierta, sin resolver todavía:** un primer intento de ubicar la línea exacta donde
-el gate falla, expresada en ticks del eje nuevo, dio dos cifras que no cuadran entre sí
-(1,59 ticks / spr≈4,51 en un borrador, ~1,78 ticks / spr≈4,68 al interpolar linealmente los
-dos puntos de `modelo/cifras_citadas.json:puerta_f31` que rodean el 5 %). La rejilla de esa
-tabla es gruesa (3,00 / 4,00 / 4,10 / 4,25 / 4,50 / 4,75 / 5,00) y con ruido de Monte Carlo
-visible entre puntos contiguos -- interpolar linealmente ahí no da una cifra fiable en
-ningún sentido. **Hasta que F3.1 mida el dato real, la línea de fallo se queda como ya
-estaba publicada arriba: "se rompe entre 4,50 y 4,75"**, sin una cifra de ticks más precisa
-que esa horquilla.
+#### Las dos líneas del gate -- no son la misma, y llamarlas igual fue el error
+
+Un primer intento de ubicar "la línea de fallo del gate" en ticks del eje nuevo dio dos
+cifras que no cuadraban entre sí. La causa no era imprecisión de la rejilla: **son dos
+líneas distintas**, y confundirlas fue el error (`REVISION_D8_S5_PASADA2.md` §2 lo señaló;
+`ORDEN_DE_TRABAJO_D9.md` §1.1 lo corrige con nombre para cada una):
+
+| nombre | valor | qué es |
+|---|---|---|
+| **línea de política** | `spr = 4,50` ≡ **1,59 ticks** | lo que la norma **manda hacer** (arriba: *"> 4,50 → NO se escala"*). **Es la que se acciona.** |
+| **línea estadística** | `spr ≈ 4,68` ≡ ~1,78 ticks | donde `P(degradar)` cruza el 5 %, interpolando linealmente los dos puntos de `modelo/cifras_citadas.json:puerta_f31` que rodean ese cruce (4,50 y 4,75 -- la rejilla es gruesa y con ruido de Monte Carlo entre puntos contiguos, así que esta cifra es SOLO informativa, nunca operativa). |
+
+**Los 0,18 $/micro entre ellas (4,68 − 4,50) son margen puesto a propósito, no ruido de
+rejilla** -- la norma ya decide en 4,50, antes de llegar a donde el riesgo estadístico
+realmente cruza el 5 %. (Corrección aritmética sobre un borrador anterior de esta sección:
+1,59 ticks equivale a `spr` 4,50, no 4,51 -- el 4,51 salía de evaluar la conversión en
+n = 1,6 en vez de 1,59.)
+
+#### Expectativa previa del operador -- anotada como expectativa, NUNCA como medida
+
+De la operativa manual previa del operador (no de F3.1, no instrumentada): la desviación
+entre el precio pedido y el obtenido **en la entrada** rondaba 0 a 0,5. Convertido con el
+factor medido de arriba (1 tick ≈ 0,9427 $/micro de `spr_usd`):
+
+| lectura | `spr` equivalente | margen hasta la línea de política (4,50) |
+|---|---|---|
+| 0-0,5 **puntos** (0-2 ticks, media ~1) | 3,94 | 0,59 ticks |
+| 0-0,5 **ticks** (media ~0,25) | 3,24 | 1,34 ticks |
+
+Las dos caen del lado bueno de la línea de política. **Tres avisos obligatorios cada vez
+que se cite esto, para que no se confunda con un dato:**
+
+1. Describe la **entrada** -- una orden límite, la salida seguridad. La que decide la
+   puerta es el **stop**, a mercado y en movimiento rápido, no la entrada.
+2. Casi seguro no era con el tamaño de posición que usa este circuito.
+3. Es un recuerdo del operador, no un registro instrumentado.
+
+Sirve para tener una expectativa razonable de que F3.1 probablemente pase -- nunca para
+sustituir la medida real de F3.1.
 
 #### El criterio de paso: el protocolo pre-registrado, no un número inventado
 

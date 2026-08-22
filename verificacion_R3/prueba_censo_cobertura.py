@@ -185,6 +185,16 @@ if __name__ == '__main__':
         fh.write("| Camino | Veces en el pack | Estado |\n|---|---|---|\n")
         for nombre, n, estado in filas:
             fh.write(f"| {nombre} | {n} | {estado} |\n")
+        fh.write(f"\n**Nota D-5** (`ORDEN_DE_TRABAJO_D9.md` §1.2): las {muertes_eval} muertes de eval de "
+                 f"esta tabla vienen del oráculo offline (`orquestador.corre_replay()`, qok del CONTRATO). "
+                 f"La Pasada 2 de LA PUERTA GRANDE (`verificacion_R3/PASADA_2_RUIDO.md`) corre por el bucle "
+                 f"en vivo con qok CAUSAL -- \"Pasada B\" en términos de la Puerta Grande -- y mide 149 "
+                 f"muertes de eval, no {muertes_eval} ({muertes_funded} de funded coincide en los dos "
+                 f"caminos). La diferencia de 1 es exactamente el defecto D-5 ya documentado "
+                 f"(`modelo/DEFECTOS_CONOCIDOS.md`, día 269: el `qok` causal diverge del `qok` del contrato "
+                 f"justo ahí, y esa bifurcación se hereda en todo día posterior) -- no una segunda medición "
+                 f"contradictoria de lo mismo, sino la misma tabla vista por dos caminos distintos, cada "
+                 f"uno correcto para su propio contrato.\n")
 
     print(open(RUTA_SALIDA).read())
 

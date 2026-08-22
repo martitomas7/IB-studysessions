@@ -151,6 +151,13 @@ que puedes usar de modelo:
    dos bugs de v8 vivían justo en casos que parecían obvios.
 4. ¿Un test falla y creo que el test está mal? → **casi nunca lo está**. Demuestra que lo
    está construyendo el contraejemplo antes de tocarlo.
+5. **¿Una cifra citada por el operador y una cifra instrumentada por la sesión de
+   ingeniería discrepan?** → **gana la instrumentada**, y la discrepancia se anota, nunca se
+   silencia. **Esto aplica también contra el operador** -- no es cortesía, es la misma R2 y
+   R3 ya escritas arriba: un número que no se ha visto salir de una medición real no vale
+   más por venir de quien manda (`ORDEN_DE_TRABAJO_D9.md` §1.3, sobre el censo de
+   micro-sesiones de la Pasada 2: 2.742 instrumentado directamente del pack contra 2.746
+   citado de memoria -- la diferencia se anotó, y se usó la cifra medida).
 
 ---
 
