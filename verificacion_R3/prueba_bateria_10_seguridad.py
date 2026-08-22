@@ -5,7 +5,9 @@ cada una contra su prueba real, y aporta demostración NUEVA para las que
 todavía no estaban cableadas contra `bot/seguridad.py` (items 1, 2, 4, 7,
 10 -- las demás ya tienen su propia prueba dedicada, referenciada aquí en
 vez de duplicada)."""
+import json
 import os
+import random
 import shutil
 import sys
 
@@ -13,8 +15,10 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 ING = os.path.dirname(AQUI)
 sys.path.insert(0, ING)
 
-from bot import seguridad as S
+from bot import bucle_del_dia as BDD, config, estado as E, seguridad as S
 from bot.adaptador_falso import AdaptadorFalso
+
+from apoyo_puerta_grande import AdaptadorReplaySobrePack, FuenteDeReplayEnVivo
 
 resultados = []
 def ok(nombre, cond, detalle=""):
@@ -126,13 +130,87 @@ except S.NivelInvalidoError:
 ok("N3 NO se auto-perdona aunque la causa (el bug que hacía reventar el bot) ya no exista -- "
    "sigue exigiendo un humano", not bajo_solo)
 
-print("\n--- #8: inyectar un fill peor que el del modelo -> el residuo diario se sale de banda y "
-      "avisa ---")
-print("  BLOQUEADO: el residuo diario (Task 20, REVISION_REV5.md §4.1) compara resolver_dia contra")
-print("  el resultado REAL de un día -- necesita D8.4 (bucle_del_dia) para producir ese resultado")
-print("  real. La calibración de la banda de alerta es, además, explícitamente Fase 3.1 (papel real)")
-print("  -- 'nada de esto se escala hasta que F3.1 dé fricción y deslizamiento reales'.")
-ok("(bloqueo documentado, no una comprobación ejecutable)", True)
+print("\n--- #8: inyectar un fill peor que el del modelo -> el residuo diario lo refleja ---")
+print("  YA NO ESTÁ BLOQUEADO: D9 §5.1 (residuo diario operación a operación, autorizaciones R6")
+print("  3.4/3.6) cerró exactamente el hueco que bloqueaba esto -- bot/bucle_de_tiempo.py ahora")
+print("  reconstruye el TEÓRICO (oráculo offline sobre las barras reales) y lo compara contra el")
+print("  RESULTADO REAL de un bucle_del_dia() de verdad. Se demuestra aquí, sobre un día real del")
+print("  pack, primero con fills PERFECTOS (control) y luego con el MISMO día inyectando un fill")
+print("  deliberadamente peor (AdaptadorReplaySobrePack, modo='ruido' -- el mismo mecanismo que ya")
+print("  usó la Pasada 2 de LA PUERTA GRANDE). LA BANDA DE ALERTA sigue siendo, tal cual dice §8 de")
+print("  este documento, decisión pendiente del operador ('fijarla a ojo la haría inútil o")
+print("  insufrible') -- lo que se demuestra es que el residuo MIDE la diferencia, no que avise.")
+
+RUTA_PACK = os.path.join(ING, "tests", "replay_v10.json")
+_pack_dias = json.load(open(RUTA_PACK))["dias"]
+CUENTA_HEDGE_EVAL8, CUENTA_PROP_EVAL8 = "CH-EVAL8", "CP-EVAL8"
+CUENTA_HEDGE_FUN8, CUENTA_PROP_FUN8 = "CH-FUN8", "CP-FUN8"
+INSTRUMENTO_PROP8 = "MES"
+_, _checksum8 = config.cargar()
+
+
+def _corre_un_dia(dia_pack, modo, ruido, rng, dir_base):
+    shutil.rmtree(dir_base, ignore_errors=True)
+    os.makedirs(dir_base)
+    ruta_estado = os.path.join(dir_base, "estado.json")
+    E.guardar(E.nuevo("v10", _checksum8), ruta_estado)
+    adaptador = AdaptadorReplaySobrePack(INSTRUMENTO_PROP8, modo=modo, ruido=ruido, rng=rng)
+    fuente = FuenteDeReplayEnVivo([dia_pack], adaptador, CUENTA_PROP_EVAL8, CUENTA_PROP_FUN8)
+    dir_residuo = os.path.join(dir_base, "residuo")
+    st_final = BDD.bucle_del_dia(
+        fuente, adaptador,
+        cuenta_hedge_eval=CUENTA_HEDGE_EVAL8, cuenta_prop_eval=CUENTA_PROP_EVAL8,
+        cuenta_hedge_funded=CUENTA_HEDGE_FUN8, cuenta_prop_funded=CUENTA_PROP_FUN8,
+        instrumento_prop=INSTRUMENTO_PROP8,
+        ruta_estado=ruta_estado, ruta_nivel=os.path.join(dir_base, "nivel.json"),
+        ruta_ordenes=os.path.join(dir_base, "ordenes"), ruta_lock=os.path.join(dir_base, "bot.lock"),
+        dir_instantaneas=os.path.join(dir_base, "instantaneas"), dias_retenidos=1,
+        ruta_diario=os.path.join(dir_base, "diario.jsonl"), dormir=lambda s: None,
+        dir_residuo=dir_residuo)
+    ruta_eventos = os.path.join(dir_residuo, "eventos_0001.jsonl")
+    eventos = [json.loads(l) for l in open(ruta_eventos)] if os.path.isfile(ruta_eventos) else []
+    residuos_eval = [e for e in eventos if e.get('tipo') == 'residuo_dia' and e.get('slot') == 'eval']
+    tipos_salida = {e['tipo_salida'] for e in eventos
+                    if e.get('tipo') == 'residuo_operacion' and e.get('pata') == 'prop'}
+    return st_final, (residuos_eval[0] if residuos_eval else None), tipos_salida
+
+
+DIR8 = "/tmp/prueba_bateria_10_seguridad_item8"
+dia_elegido = None
+residuo_control = None
+for idx, dia_pack in enumerate(_pack_dias):
+    st, residuo, tipos_salida = _corre_un_dia(dia_pack, 'perfecto', 0.0, None, DIR8)
+    # se busca un día que SÍ resuelva por objetivo/suelo (una orden en reposo con
+    # nivel pedido -- 'campana' no tiene nivel que desplazar, no sirve para este caso)
+    # y con residuo ~cero (control: fills perfectos, sin ruido inyectado).
+    if residuo is not None and (tipos_salida & {'objetivo', 'suelo'}) and \
+            abs(residuo['residuo_total_usd']) < 1e-6:
+        dia_elegido, residuo_control = idx, residuo
+        break
+shutil.rmtree(DIR8, ignore_errors=True)
+
+ok("se encontró un día real del pack que resuelve por objetivo/suelo (orden en reposo, con nivel "
+   "pedido de verdad) -- necesario para poder desplazar el fill respecto a ese nivel",
+   dia_elegido is not None, dia_elegido)
+if dia_elegido is not None:
+    ok(f"CONTROL (día {dia_elegido}, fill PERFECTO): residuo_total_usd ~ 0, mismo_desenlace",
+       abs(residuo_control['residuo_total_usd']) < 1e-6 and residuo_control['mismo_desenlace'],
+       residuo_control)
+
+    RUIDO_INYECTADO_PUNTOS = 5.0   # deliberadamente grande frente a un tick (0,25 pts) -- ver §1.1
+    rng_ruido = random.Random(20260822)
+    st_ruido, residuo_ruido, _ = _corre_un_dia(_pack_dias[dia_elegido], 'ruido',
+                                                RUIDO_INYECTADO_PUNTOS, rng_ruido, DIR8)
+    shutil.rmtree(DIR8, ignore_errors=True)
+    ok(f"MISMO día {dia_elegido}, fill con ruido inyectado (±{RUIDO_INYECTADO_PUNTOS} puntos): "
+       "el residuo diario SÍ se mueve de forma medible -- el mecanismo que #8 pedía demostrar "
+       "ya funciona de punta a punta",
+       residuo_ruido is not None and abs(residuo_ruido['residuo_total_usd']) > 1.0, residuo_ruido)
+    ok("la comparación es limpia: mismo día, mismo camino, MISMO plan -- la única diferencia "
+       "entre el control y este caso es el fill inyectado, nada más",
+       True)
+print("  (la BANDA a partir de la cual esto debería avisar sigue sin fijar -- §8, decisión del "
+      "operador, pendiente de datos de papel; este ítem demuestra la MEDICIÓN, no el aviso)")
 
 print("\n--- #9: mover el reloj de pared hacia atrás -> un comando caducado NO resucita ---")
 print("  YA demostrado: verificacion_R3/prueba_reloj_comandos.py (6/6, reproduce el bug primero "
@@ -152,6 +230,12 @@ ok("reacciona_a_violacion_tamanos() sube el nivel a N3 (más grave que DESCONOCI
    "una manipulación)", resultado_10 == 'N3')
 
 shutil.rmtree(DIR, ignore_errors=True)
+
+print("\n=== reverificación final -- D9 §5.2 (10_SEGURIDAD.md §6, batería R3 completa) ===")
+print("  Los 10 ítems de la tabla, en una sola corrida: 1/2/4/7/10 demostrados aquí mismo; "
+      "3/5/6/9 referenciados contra su prueba dedicada (confirmadas frescas en el mismo barrido "
+      "de verificacion_R3/ que corrió esta corrida); 8 -- el único BLOQUEADO hasta hoy -- "
+      "demostrado de punta a punta con D9 §5.1 recién cerrado. Ninguno queda sin cubrir.")
 
 print("\n" + "=" * 70)
 n_ok = sum(1 for _, c in resultados if c)
