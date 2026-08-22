@@ -40,7 +40,8 @@ def _agrega_eventos(historial_diario):
 
 def construye(estado, diario_hoy, historial_diario, ahora_iso=None, ahora_monotono=0.0,
               mercado_snapshots=None, incidencias_recientes=None, incidencias_contadores=None,
-              cifras_citadas=None, pendientes_extra=None, nivel_registro=None):
+              cifras_citadas=None, pendientes_extra=None, nivel_registro=None,
+              identidad_nt8=None):
     """`estado`: el dict de estado.json (ya cargado). `diario_hoy`: la línea
     de diario del día actual (o None si no ha corrido ningún día todavía).
     `historial_diario`: lista de líneas de diario (para E6/bloque 6) -- en
@@ -52,7 +53,15 @@ def construye(estado, diario_hoy, historial_diario, ahora_iso=None, ahora_monoto
     `bot/seguridad.py::lee_nivel(ruta_nivel)` (o `None` si quien llama
     todavía no lo ha leído -- este módulo NUNCA lee ficheros él mismo, ver
     docstring de arriba) -- mismo principio que `mercado_snapshots`/
-    `incidencias_recientes`: datos YA cargados, nunca una ruta."""
+    `incidencias_recientes`: datos YA cargados, nunca una ruta.
+
+    `identidad_nt8` (D9 §3.5 reducida, `DECISION_CREDENCIALES_Y_FASE.md`,
+    autorización R6, 22-08-2026): `{'cuenta': str|None, 'modo':
+    'SIMULADA'|'REAL'|None, 'fase': str|None}`, ya resuelto por quien llama
+    (mismo principio que `nivel_registro`: este módulo no le pregunta nada a
+    NT8 él mismo). `None` -- el valor por defecto, y el que siguen usando
+    todos los llamadores de antes de este cambio -- pinta la banda como "no
+    declarado", nunca inventa un valor."""
     cfg = config.obtener()
     rancio_seg = cfg.dashboard.rancio_seg.valor()
     dias_por_mes = cfg.tesoreria.dias_por_mes.valor()
@@ -199,10 +208,15 @@ def construye(estado, diario_hoy, historial_diario, ahora_iso=None, ahora_monoto
 
     incidencias = dict(ultimas=incidencias_recientes, contadores=incidencias_contadores)
 
+    # --- banda de identidad (D9 §3.5 reducida) ------------------------------
+    identidad = dict(cuenta=None, modo=None, fase=None)
+    identidad.update(identidad_nt8 or {})
+
     return dict(
         generado_ts=ahora_iso or '—', ahora_monotono=ahora_monotono, rancio_seg=rancio_seg,
         ahora=ahora_block, riesgo=riesgo, pendientes=pendientes, cuentas=cuentas,
         mercado_friccion=mercado, modelo_vs_realidad=modelo_vs_realidad,
         laboratorio=laboratorio, incidencias=incidencias,
         desviaciones_activas=estado.get('desviaciones_activas', []),
+        identidad=identidad,
     )

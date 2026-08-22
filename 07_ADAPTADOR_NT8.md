@@ -55,6 +55,7 @@ Cualquier camino (A/B/C, §2) tiene que poder implementar exactamente esto:
 | `leer_estado_orden(order_id)` | `order_id` | enviada / aceptada / parcial / llena / rechazada / cancelada | §4 |
 | `hay_conexion(cuenta)` | cuenta | bool | se comprueba antes de cada operación; nunca se asume |
 | `leer_cuenta(cuenta)` | cuenta | caja, PnL realizado, poder de compra | diagnóstico y alertas; el sizing real vive en `estado.json`, no aquí |
+| `consulta_modo_cuenta(cuenta)` | cuenta | `(modo, motivo)`, ver tabla de abajo | D9 §3.5 reducida (`DECISION_CREDENCIALES_Y_FASE.md`, autorización R6, 22-08-2026) — aditivo, ningún método existente se toca |
 | `arrancar()` / `parar()` | — | — | ciclo de vida del propio puente (`SetUp`/`TearDown` de la ATI) |
 
 **Regla de dependencias (Arquitectura §2):** `adaptadores/` no importa `ciclo_vida` ni `tesoreria`, y no
@@ -98,6 +99,37 @@ campos `None` — igual que debe negarse a calcular `spr_usd` con registros `NO_
 > especificación a cumplir cuando D9 §3.3 construya ese agregador, no como descripción de código
 > presente. No tocar hasta entonces (R1: la especificación gobierna, pero no se anticipa código que
 > aún no se ha autorizado a construir).
+
+### 1.2 · `consulta_modo_cuenta(cuenta)` — la guarda contra la realidad, no contra la etiqueta
+
+Añadida por D9 §3.5 reducida (`DECISION_CREDENCIALES_Y_FASE.md`, autorización R6, 22-08-2026). El bot
+no almacena ningún secreto: las credenciales de MFF/Tradovate/AMP-CQG viven en NT8 (Control Center),
+igual que ya fija `09_DESPLIEGUE.md` §3. Lo único que el bot guarda es un **descriptor**, que no es
+secreto — el nombre de la cuenta/conexión de NT8 que debe usar, y una etiqueta `demo`/`real` puramente
+informativa (se pinta en el dashboard, nunca decide nada por sí sola: la etiqueta es lo que el operador
+CREE que es la cuenta, no lo que la cuenta ES de verdad).
+
+La guarda que sí decide se verifica **contra lo que NT8 responde**, nunca contra esa etiqueta:
+
+| campo | qué es |
+|---|---|
+| `modo` | `'SIMULADA'`, `'REAL'`, o `None` si el adaptador no puede saberlo |
+| `motivo` | `None` si `modo` no es `None`; si `modo` es `None`, por qué (mismo principio R2 de §1.1: nunca un valor sustituido) |
+
+`bot/bucle_del_dia.py::_verifica_identidad_nt8()` compara `modo` contra lo que la `fase` declarada
+exige (toda fase de D9 §3.2 — `f3.1`/`f3.2`/`f3.3`/`plena` — es dinero real, así que hoy exige
+`'REAL'`; el modo `papel_feed_retrasado` de D9 §3.3, cuando exista, exigirá `'SIMULADA'` — ver el
+docstring de esa función para el estado exacto de esa segunda rama, todavía no construida). Si no
+coinciden, o si `hay_conexion(cuenta)` es falso, o si `modo` es `None`: **fallo al arrancar, ruidoso**
+— nunca un aviso que se pueda ignorar. `AdaptadorFalso` (el simulador de pruebas) responde `modo=None`
+con motivo `'adaptador_falso_no_conoce_su_propio_modo_salvo_que_se_configure'` salvo que una prueba lo
+configure explícitamente vía `fija_modo_cuenta()` — mismo patrón que `ts_feed` en §1.1: un simulador no
+finge saber algo que no sabe.
+
+> **El panel de escritura de la versión original de §3.5 queda cancelado, no aplazado**
+> (`DECISION_CREDENCIALES_Y_FASE.md` punto 1): si no hay ningún secreto que guardar, no hay nada que
+> escribir en un panel. En su lugar, el dashboard (`bot/dashboard.py`) muestra, siempre visible arriba,
+> la cuenta/conexión declarada, `modo` según NT8, y la fase declarada — los tres juntos.
 
 > **El instrumento es MES en las DOS patas, sin excepción — escríbelo explícito, no lo dejes
 > abstracto.** La norma calcula `pv = 5·k` (R-2.5) y `03_CONFIG.yaml → hedge_broker.valor_punto_usd`

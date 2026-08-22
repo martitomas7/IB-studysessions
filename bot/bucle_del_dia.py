@@ -81,6 +81,82 @@ def _topes_de_fase(fase):
     return None   # 'plena' -- sin tope de fase, comportamiento de siempre
 
 
+ETIQUETAS_DESCRIPTOR_VALIDAS = frozenset({'demo', 'real'})
+
+
+def _modo_nt8_esperado(fase):
+    """D9 §3.5 reducida (`DECISION_CREDENCIALES_Y_FASE.md`, autorización R6,
+    22-08-2026): qué `modo` (07_ADAPTADOR_NT8.md §1.2) debe reportar NT8
+    para que la `fase` declarada tenga sentido. Hoy TODA fase de §3.2
+    (`f3.1`/`f3.2`/`f3.3`/`plena`) es dinero real -- ninguna de las cuatro
+    admite una cuenta `SIMULADA` por debajo.
+
+    Cuando D9 §3.3 (`papel_feed_retrasado`) exista, esa rama exigirá
+    `'SIMULADA'` -- pero ese modo todavía NO es un valor de `fase` ni un
+    parámetro que `bucle_del_dia()` reciba hoy, así que esta función no
+    tiene todavía nada que ramificar para él. Quien construya §3.3 debe
+    extender ESTA función (no duplicar la tabla en otro sitio) el día que
+    `papel_feed_retrasado` exista de verdad."""
+    if fase not in FASES_VALIDAS:
+        raise ValueError(f"fase={fase!r} no reconocida -- debe ser una de {sorted(FASES_VALIDAS)}")
+    return 'REAL'
+
+
+def _valida_descriptor_nt8(descriptor):
+    """Comprobación de forma, no de realidad -- ver `_verifica_identidad_nt8()`
+    para la parte que sí pregunta a NT8. `etiqueta` es puramente informativa
+    (se pinta en el dashboard), pero un valor fuera de {'demo','real'} es un
+    error de configuración y debe fallar igual de alto que cualquier otro."""
+    f = []
+    if 'cuenta_nt8' not in descriptor or not descriptor['cuenta_nt8']:
+        f.append("descriptor_nt8: falta 'cuenta_nt8' (o está vacío)")
+    if descriptor.get('etiqueta') not in ETIQUETAS_DESCRIPTOR_VALIDAS:
+        f.append(f"descriptor_nt8: etiqueta={descriptor.get('etiqueta')!r} no reconocida -- "
+                 f"debe ser una de {sorted(ETIQUETAS_DESCRIPTOR_VALIDAS)}")
+    return f
+
+
+def _verifica_identidad_nt8(fase, descriptor, adaptador):
+    """D9 §3.5 reducida (`DECISION_CREDENCIALES_Y_FASE.md`, autorización R6,
+    22-08-2026): "la guarda se verifica contra la realidad, no contra la
+    etiqueta". Al arrancar, se le pregunta a NT8 (nunca al propio descriptor)
+    qué cuenta es y si es SIMULADA o REAL, y se compara con lo que la `fase`
+    declarada exige (`_modo_nt8_esperado()`). Devuelve la lista de fallos
+    (vacía = arranca limpio) -- mismo contrato de retorno que
+    `estado.py::valida_tope_fase()`, DELIBERADAMENTE separada de ella (no
+    tiene nada que ver con `estado.json`, así que no tiene nada que hacer
+    en `bot/estado.py`).
+
+    `descriptor=None` -> nunca falla: opt-in, igual que `topes=None` en
+    D9 §3.2 -- ni un solo punto de llamada existente (los 504 días de LA
+    PUERTA GRANDE incluidos, que ni siquiera usan un `AdaptadorFalso`, sino
+    `AdaptadorReplaySobrePack`) declara un descriptor, así que ninguno
+    empieza a preguntarle nada a NT8 por este cambio. El día que exista un
+    `--config` real (D9 §5.4, todavía sin construir) será quien decida CÓMO
+    se lee `descriptor_nt8` de disco -- esta función solo exige la forma ya
+    resuelta, un dict, el mismo principio que `orquestador.procesa_dia(...,
+    topes=)` exige números ya resueltos, nunca una ruta ni una etiqueta de
+    fase en crudo."""
+    if descriptor is None:
+        return []
+    f = _valida_descriptor_nt8(descriptor)
+    if f:
+        return f
+    cuenta = descriptor['cuenta_nt8']
+    if not adaptador.hay_conexion(cuenta):
+        return [f"NT8 no sabe contestar por la cuenta declarada ({cuenta!r}): "
+                f"hay_conexion() dice que no hay conexión"]
+    modo, motivo = adaptador.consulta_modo_cuenta(cuenta)
+    if modo is None:
+        return [f"NT8 no sabe contestar por la cuenta declarada ({cuenta!r})"
+                + (f": {motivo}" if motivo else "")]
+    esperado = _modo_nt8_esperado(fase)
+    if modo != esperado:
+        return [f"la fase declarada ({fase!r}) exige una cuenta {esperado}, pero NT8 dice que "
+                f"la cuenta declarada ({cuenta!r}) es {modo}"]
+    return []
+
+
 def _escribe_eventos_residuo(dir_residuo, dia_negociacion, eventos):
     """D9 §3.6 (autorización R6, 22-08-2026, Capa B): un fichero JSONL por
     día, `residuo/eventos_<dia_negociacion>.jsonl` -- una línea por evento
@@ -107,7 +183,8 @@ def bucle_del_dia(fuente_barras, adaptador,
                    cuenta_hedge_eval, cuenta_prop_eval, cuenta_hedge_funded, cuenta_prop_funded,
                    instrumento_prop, ruta_estado, ruta_nivel, ruta_ordenes, ruta_lock,
                    dir_instantaneas, dias_retenidos, ruta_diario, fase,
-                   modo_auto_confirma=True, rng=None, reloj=None, dormir=None, dir_residuo=None):
+                   modo_auto_confirma=True, rng=None, reloj=None, dormir=None, dir_residuo=None,
+                   descriptor_nt8=None):
     """El bucle único de D8.4. `fuente_barras` (`bot/fuente_barras.py`) y
     `adaptador` (puerto de `07_ADAPTADOR_NT8.md` §1) son los DOS puertos
     de §0 -- todo lo demás (nombres de cuenta, rutas de persistencia) es
@@ -147,9 +224,22 @@ def bucle_del_dia(fuente_barras, adaptador,
     reproduce el comportamiento de siempre, bit a bit -- es la que usan
     los arneses de R3 que no necesitan tope alguno.
 
-    Devuelve el `st` final, o `None` si `estado.json` está corrupto, o si
-    excede el tope de fase al arrancar (los dos casos ya reaccionados a
-    N4 antes de devolver)."""
+    `descriptor_nt8` (D9 §3.5 reducida, `DECISION_CREDENCIALES_Y_FASE.md`,
+    autorización R6, 22-08-2026): opcional, `None` por defecto -- el bot no
+    guarda ningún secreto (las credenciales viven en NT8, ver
+    `09_DESPLIEGUE.md` §3), así que esto es solo un descriptor NO secreto,
+    `{'cuenta_nt8': str, 'etiqueta': 'demo'|'real'}`. `None` preserva el
+    comportamiento de siempre (no se le pregunta nada a NT8 sobre su modo)
+    -- deliberado, mismo principio que `topes=None`: ningún punto de llamada
+    existente declara un descriptor, así que ninguno cambia. Si se pasa uno,
+    al arrancar se compara lo que NT8 responde de verdad (nunca la etiqueta
+    autoasignada) contra lo que la `fase` exige -- ver
+    `_verifica_identidad_nt8()`.
+
+    Devuelve el `st` final, o `None` si `estado.json` está corrupto, si
+    excede el tope de fase al arrancar, o si la identidad de NT8 no
+    coincide con la fase declarada (los tres casos ya reaccionados a N4
+    antes de devolver)."""
     import random as _random
     import time as _time
     reloj = reloj or _time.monotonic
@@ -172,6 +262,17 @@ def bucle_del_dia(fuente_barras, adaptador,
             # cruda sin contexto.
             detalle = (f"estado.json en {ruta_estado} ya excede el tope de fase={fase!r} -- "
                        f"el bot NO arranca:\n" + "\n".join(f"  - {x}" for x in fallos_fase))
+            SEG.reacciona_a_estado_invalido(ruta_nivel, detalle=detalle)
+            return None
+
+        fallos_identidad = _verifica_identidad_nt8(fase, descriptor_nt8, adaptador)
+        if fallos_identidad:
+            # D9 §3.5 reducida: "la guarda se verifica contra la realidad, no
+            # contra la etiqueta" -- si NT8 no confirma la cuenta/modo que la
+            # fase declarada exige, el bot NO arranca, misma reacción N4 que
+            # un estado.json corrupto o un tope de fase excedido.
+            detalle = ("identidad de NT8 no coincide con fase=" + repr(fase) + " -- "
+                       "el bot NO arranca:\n" + "\n".join(f"  - {x}" for x in fallos_identidad))
             SEG.reacciona_a_estado_invalido(ruta_nivel, detalle=detalle)
             return None
 

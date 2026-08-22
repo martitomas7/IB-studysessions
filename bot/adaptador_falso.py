@@ -65,6 +65,7 @@ class AdaptadorFalso:
         self.eventos = []             # log crudo, solo para diagnostico/pruebas
         self._grupos_oco = {}         # id_grupo_oco -> (order_id_stop, order_id_limite)
         self._contador_oco = itertools.count(1)
+        self._modo_cuenta = {}        # cuenta -> 'SIMULADA'/'REAL', ver consulta_modo_cuenta()
 
     def programa_abrir(self, cuenta, instrumento, **comportamiento):
         """Pre-registra el `comportamiento` (fill_en_s / en_cancelar / rechazar /
@@ -92,6 +93,30 @@ class AdaptadorFalso:
 
     def leer_cuenta(self, cuenta):
         return dict(caja=0.0, pnl_realizado=0.0, poder_de_compra=1e9)
+
+    def fija_modo_cuenta(self, cuenta, modo):
+        """SOLO PRUEBAS -- fabrica a propósito lo que `consulta_modo_cuenta()`
+        responde para `cuenta`. `modo` debe ser 'SIMULADA' o 'REAL' (mismo
+        vocabulario que 07_ADAPTADOR_NT8.md §1.2)."""
+        if modo not in ('SIMULADA', 'REAL'):
+            raise ValueError(f"modo={modo!r} no reconocido -- debe ser 'SIMULADA' o 'REAL'")
+        self._modo_cuenta[cuenta] = modo
+
+    def consulta_modo_cuenta(self, cuenta):
+        """07_ADAPTADOR_NT8.md §1.2 (D9 §3.5 reducida, autorización R6,
+        22-08-2026): la guarda que compara la fase declarada contra la
+        REALIDAD que NT8 reporta, nunca contra una etiqueta autoasignada.
+
+        Devuelve `(modo, motivo)`: `modo` ∈ {'SIMULADA', 'REAL', None}.
+        Este simulador, sin configurar nada, NUNCA finge saber su propio
+        modo -- mismo principio R2 que `ts_feed` en `leer_fill_detalle()`
+        (un `None` con motivo es un dato; un valor inventado no lo es).
+        Una prueba que necesite un modo concreto debe llamar primero a
+        `fija_modo_cuenta(cuenta, modo)`."""
+        modo = self._modo_cuenta.get(cuenta)
+        if modo is None:
+            return None, 'adaptador_falso_no_conoce_su_propio_modo_salvo_que_se_configure'
+        return modo, None
 
     # --- órdenes -------------------------------------------------------
     def abrir(self, cuenta, instrumento, direccion, cantidad, comportamiento=None):

@@ -257,6 +257,36 @@ def _bloque_incidencias(ctx):
     </section>'''
 
 
+def _banda_identidad(ctx):
+    """D9 §3.5 reducida (`DECISION_CREDENCIALES_Y_FASE.md`, autorización R6,
+    22-08-2026): "el dashboard muestra, arriba y bien visible: la cuenta y
+    conexión de NT8 en uso, si es SIMULADA o REAL (según lo que diga NT8, no
+    según nuestra etiqueta), y la fase declarada. Los tres juntos, siempre a
+    la vista." Reemplaza al panel de escritura de la versión original de
+    §3.5, cancelado -- sin secretos que guardar, no hay nada que escribir.
+
+    `ident['modo']` viene de `bot/adaptador_falso.py::consulta_modo_cuenta()`
+    (o del adaptador NT8 real, cuando exista) -- NUNCA de la etiqueta
+    `demo`/`real` autoasignada del descriptor, que ni siquiera llega hasta
+    aquí. `None` en cualquier campo -- incluido "no se declaró ningún
+    descriptor" -- se pinta explícito como "no declarado", nunca en
+    silencio y nunca inventando un valor (mismo principio R2 del resto del
+    dashboard: "un dato viejo tiene que parecer viejo", aquí "un dato
+    ausente tiene que parecer ausente")."""
+    ident = ctx.get('identidad') or {}
+    cuenta, modo, fase = ident.get('cuenta'), ident.get('modo'), ident.get('fase')
+    estado_modo = 'critico' if modo == 'REAL' else ('bien' if modo == 'SIMULADA' else 'aviso')
+    return f'''
+    <div class="banda-identidad">
+      <span class="banda-item"><span class="etiqueta">cuenta/conexión NT8</span>
+        <span class="valor">{_esc(cuenta) if cuenta is not None else '<span class="atenuado">no declarado</span>'}</span></span>
+      <span class="banda-item"><span class="etiqueta">modo (según NT8)</span>
+        {_semaforo(estado_modo, modo if modo is not None else 'NO DECLARADO')}</span>
+      <span class="banda-item"><span class="etiqueta">fase declarada</span>
+        <span class="valor">{_esc(fase) if fase is not None else '<span class="atenuado">no declarado</span>'}</span></span>
+    </div>'''
+
+
 def _bloque_desviaciones(ctx):
     dv = ctx.get('desviaciones_activas', [])
     if not dv:
@@ -351,6 +381,12 @@ table.tabla tbody tr:last-child td {{ border-bottom:none; }}
 .marca-etq {{ position:absolute; top:2px; left:2px; font-size:9px; color:var(--muy-atenuado); }}
 .bloque-desviaciones {{ grid-column: 1 / -1; border-color: var(--aviso); }}
 .bloque-desviaciones h2 {{ color: var(--aviso); }}
+.banda-identidad {{ display:flex; flex-wrap:wrap; gap:16px; align-items:center;
+  background: var(--superficie); border:1px solid var(--borde); border-radius:4px;
+  padding:8px 14px; margin-bottom:12px; }}
+.banda-item {{ display:flex; align-items:baseline; gap:6px; }}
+.banda-item .etiqueta {{ color: var(--atenuado); font-size:11px; }}
+.banda-item .valor {{ font-size:13px; font-weight:600; }}
 .pie {{ margin-top:16px; color: var(--muy-atenuado); font-size:10.5px; text-align:center; }}
 @media (prefers-color-scheme: light) {{
   /* Regla explícita de 08_LABORATORIO.md §6.3: "modo oscuro por defecto ...
@@ -365,6 +401,7 @@ table.tabla tbody tr:last-child td {{ border-bottom:none; }}
     <span class="atenuado">generado {_esc(ctx.get('generado_ts','—'))}
       {'· <span style="color:var(--critico)">paleta con fallos, ver bot/paleta.py</span>' if not ok_paleta else ''}</span>
   </div>
+  {_banda_identidad(ctx)}
   <div class="parrafo-limite">
     <strong>El papel puede medir la mecánica del circuito y dar una cota inferior de la fricción del
     mercado. NO puede medir la fricción real del hedge (<code>spr_usd</code>) ni el deslizamiento real
